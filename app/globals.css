@@ -1,26 +1,352 @@
 @import "tailwindcss";
 
+/* =========================================================
+   AI Learning — Design System
+   Light / Elegant / Royal Accent
+   ========================================================= */
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f7f8fa;
+  --foreground: #334155;
+
+  --surface: #ffffff;
+  --surface-soft: #f8fafc;
+  --surface-hover: #f1f5f9;
+
+  --sidebar: #ffffff;
+  --sidebar-border: #e7eaf0;
+
+  --primary: #52657a;
+  --primary-hover: #43566a;
+  --primary-soft: #eef2f6;
+
+  --accent: #b69a62;
+  --accent-soft: #f7f2e8;
+
+  --border: #e6e9ee;
+  --border-strong: #d9dee6;
+
+  --text: #334155;
+  --text-soft: #64748b;
+  --muted: #94a3b8;
+
+  --success: #4f8a6d;
+  --success-soft: #edf7f1;
+
+  --danger: #b86b6b;
+  --danger-soft: #fdf0f0;
+
+  --warning: #b08a4b;
+  --warning-soft: #fbf6e9;
+
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.03);
+  --shadow-md:
+    0 8px 24px rgba(15, 23, 42, 0.05),
+    0 2px 6px rgba(15, 23, 42, 0.025);
+
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
 }
+
+/* =========================================================
+   PEARL
+   Default — هادئ ونظيف
+   ========================================================= */
+
+[data-theme="pearl"] {
+  --background: #f7f8fa;
+  --foreground: #334155;
+
+  --surface: #ffffff;
+  --surface-soft: #f8fafc;
+  --surface-hover: #f1f5f9;
+
+  --sidebar: #ffffff;
+  --sidebar-border: #e7eaf0;
+
+  --primary: #52657a;
+  --primary-hover: #43566a;
+  --primary-soft: #eef2f6;
+
+  --accent: #b69a62;
+  --accent-soft: #f7f2e8;
+
+  --border: #e6e9ee;
+  --border-strong: #d9dee6;
+
+  --text: #334155;
+  --text-soft: #64748b;
+  --muted: #94a3b8;
+}
+
+/* =========================================================
+   ROYAL
+   لمسة ملكية ناعمة
+   ========================================================= */
+
+[data-theme="royal"] {
+  --background: #faf9fc;
+  --foreground: #3f3b4a;
+
+  --surface: #ffffff;
+  --surface-soft: #fbfaff;
+  --surface-hover: #f5f2fa;
+
+  --sidebar: #ffffff;
+  --sidebar-border: #e9e5ef;
+
+  --primary: #76689a;
+  --primary-hover: #655787;
+  --primary-soft: #f1edf8;
+
+  --accent: #b69a62;
+  --accent-soft: #f8f3e9;
+
+  --border: #e9e5ef;
+  --border-strong: #ddd6e8;
+
+  --text: #3f3b4a;
+  --text-soft: #716b7c;
+  --muted: #9b95a6;
+}
+
+/* =========================================================
+   OCEAN
+   ========================================================= */
+
+[data-theme="ocean"] {
+  --background: #f5f9fb;
+  --foreground: #344b57;
+
+  --surface: #ffffff;
+  --surface-soft: #f7fbfc;
+  --surface-hover: #edf6f9;
+
+  --sidebar: #ffffff;
+  --sidebar-border: #dfecef;
+
+  --primary: #4c7f93;
+  --primary-hover: #3f6d80;
+  --primary-soft: #eaf4f7;
+
+  --accent: #6f9eaa;
+  --accent-soft: #edf7f8;
+
+  --border: #dfebee;
+  --border-strong: #d2e1e5;
+
+  --text: #344b57;
+  --text-soft: #647d87;
+  --muted: #91a6ae;
+}
+
+/* =========================================================
+   EMERALD
+   ========================================================= */
+
+[data-theme="emerald"] {
+  --background: #f5f9f7;
+  --foreground: #354d43;
+
+  --surface: #ffffff;
+  --surface-soft: #f8fbf9;
+  --surface-hover: #edf6f1;
+
+  --sidebar: #ffffff;
+  --sidebar-border: #dfebe4;
+
+  --primary: #4d806b;
+  --primary-hover: #416f5c;
+  --primary-soft: #eaf4ef;
+
+  --accent: #91a77c;
+  --accent-soft: #f1f6ec;
+
+  --border: #dfebe4;
+  --border-strong: #d2e1d9;
+
+  --text: #354d43;
+  --text-soft: #667e73;
+  --muted: #93a79d;
+}
+
+/* =========================================================
+   MIDNIGHT
+   Dark theme — هادئ وليس أسود
+   ========================================================= */
+
+[data-theme="midnight"] {
+  --background: #1c2027;
+  --foreground: #e2e6ec;
+
+  --surface: #242932;
+  --surface-soft: #20252d;
+  --surface-hover: #2c323c;
+
+  --sidebar: #20252d;
+  --sidebar-border: #343b46;
+
+  --primary: #91a8c8;
+  --primary-hover: #a5b9d4;
+  --primary-soft: #303946;
+
+  --accent: #c4aa70;
+  --accent-soft: #353127;
+
+  --border: #343b46;
+  --border-strong: #424a56;
+
+  --text: #e2e6ec;
+  --text-soft: #aab3c0;
+  --muted: #7e8998;
+
+  --success: #78a88d;
+  --success-soft: #26382f;
+
+  --danger: #c98282;
+  --danger-soft: #3b2929;
+
+  --warning: #c4a05e;
+  --warning-soft: #393226;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.15);
+  --shadow-md: 0 10px 30px rgba(0, 0, 0, 0.18);
+}
+
+/* =========================================================
+   Tailwind Theme
+   ========================================================= */
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+
+  --color-surface: var(--surface);
+  --color-surface-soft: var(--surface-soft);
+  --color-surface-hover: var(--surface-hover);
+
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-border: var(--sidebar-border);
+
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-soft: var(--primary-soft);
+
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+
+  --color-text: var(--text);
+  --color-text-soft: var(--text-soft);
+  --color-muted: var(--muted);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+/* =========================================================
+   Base
+   ========================================================= */
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-height: 100%;
+  background: var(--background);
 }
 
 body {
+  min-height: 100vh;
+  margin: 0;
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+
+  font-family:
+    var(--font-cairo),
+    "Cairo",
+    "Segoe UI",
+    Tahoma,
+    Arial,
+    sans-serif;
+
+  font-size: 14px;
+  line-height: 1.7;
+
+  transition:
+    background-color 220ms ease,
+    color 220ms ease;
+}
+
+/* =========================================================
+   Scrollbar
+   ========================================================= */
+
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd2dc;
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #aeb8c5;
+}
+
+[data-theme="midnight"] ::-webkit-scrollbar-thumb {
+  background: #46505e;
+}
+
+/* =========================================================
+   Selection
+   ========================================================= */
+
+::selection {
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+/* =========================================================
+   Form Elements
+   ========================================================= */
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+button {
+  -webkit-tap-highlight-color: transparent;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--muted);
+}
+
+/* =========================================================
+   Utility
+   ========================================================= */
+
+.surface {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
+}
+
+.surface-elevated {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-md);
 }
