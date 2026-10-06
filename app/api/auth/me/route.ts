@@ -9,13 +9,13 @@ export async function GET() {
   try {
     const cookieStore = await cookies();
 
-    const token = cookieStore.get(
-      "ai_learning_session"
-    )?.value;
+    const token = cookieStore.get("ai_learning_session")?.value;
 
     if (!token) {
       return NextResponse.json({
         user: null,
+        subscription: null,
+        plan: null,
       });
     }
 
@@ -35,7 +35,21 @@ export async function GET() {
           national_id,
           email,
           role,
-          is_active
+          is_active,
+          subscriptions (
+            id,
+            start_date,
+            end_date,
+            status,
+            plans (
+              id,
+              name,
+              price,
+              monthly_limit,
+              daily_limit,
+              duration_days
+            )
+          )
         )
         `
       )
@@ -45,6 +59,8 @@ export async function GET() {
     if (error || !session) {
       return NextResponse.json({
         user: null,
+        subscription: null,
+        plan: null,
       });
     }
 
@@ -56,6 +72,8 @@ export async function GET() {
 
       return NextResponse.json({
         user: null,
+        subscription: null,
+        plan: null,
       });
     }
 
@@ -66,7 +84,50 @@ export async function GET() {
     if (!user || !user.is_active) {
       return NextResponse.json({
         user: null,
+        subscription: null,
+        plan: null,
       });
+    }
+
+    // ============================================
+    // استخراج الاشتراك والخطة الفعالة
+    // ============================================
+    let subscription = null;
+    let plan = null;
+
+    const subs = user.subscriptions;
+
+    if (Array.isArray(subs) && subs.length > 0) {
+      // نبحث عن اشتراك active ومش منتهي الصلاحية
+      const activeSub = subs.find(
+        (s) =>
+          s.status === "active" &&
+          new Date(s.end_date) >= new Date()
+      );
+
+      if (activeSub) {
+        subscription = {
+          id: activeSub.id,
+          startDate: activeSub.start_date,
+          endDate: activeSub.end_date,
+          status: activeSub.status,
+        };
+
+        const planData = Array.isArray(activeSub.plans)
+          ? activeSub.plans[0]
+          : activeSub.plans;
+
+        if (planData) {
+          plan = {
+            id: planData.id,
+            name: planData.name,
+            price: planData.price,
+            monthlyLimit: planData.monthly_limit,
+            dailyLimit: planData.daily_limit,
+            durationDays: planData.duration_days,
+          };
+        }
+      }
     }
 
     return NextResponse.json({
@@ -79,12 +140,16 @@ export async function GET() {
         email: user.email,
         role: user.role,
       },
+      subscription,
+      plan,
     });
   } catch (error) {
     console.error("Me API error:", error);
 
     return NextResponse.json({
       user: null,
+      subscription: null,
+      plan: null,
     });
   }
 }

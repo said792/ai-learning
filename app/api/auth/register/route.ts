@@ -133,6 +133,35 @@ export async function POST(req: Request) {
       );
     }
 
+    // ============================================
+    // تفعيل الخطة المجانية تلقائياً
+    // ============================================
+    try {
+      const { data: freePlan } = await supabaseAdmin
+        .from("plans")
+        .select("id, duration_days")
+        .eq("price", 0)
+        .limit(1)
+        .maybeSingle();
+
+      if (freePlan) {
+        const startDate = new Date().toISOString();
+        const endDate = new Date();
+        endDate.setDate(endDate.getDate() + (freePlan.duration_days || 30));
+
+        await supabaseAdmin.from("subscriptions").insert({
+          user_id: user.id,
+          plan_id: freePlan.id,
+          start_date: startDate,
+          end_date: endDate.toISOString(),
+          status: "active",
+        });
+      }
+    } catch (subError) {
+      // لو فشل تفعيل الخطة ما نوقفش التسجيل
+      console.error("Failed to activate free plan:", subError);
+    }
+
     return NextResponse.json({
       success: true,
       user,

@@ -35,7 +35,21 @@ export async function POST(req: Request) {
         email,
         password_hash,
         role,
-        is_active
+        is_active,
+        subscriptions (
+          id,
+          start_date,
+          end_date,
+          status,
+          plans (
+            id,
+            name,
+            price,
+            monthly_limit,
+            daily_limit,
+            duration_days
+          )
+        )
         `
       )
       .or(
@@ -112,16 +126,7 @@ export async function POST(req: Request) {
       .eq("id", user.id);
 
     /* =========================================================
-       ربط مستندات الزائر بالحساب الجديد
-       
-       1. نقرأ guest_id من الكوكيز
-       2. نحدّث كل مستندات هذا الزائر → نضع لها user_id
-       3. نمسح كوكيز guest_id
-       
-       هذا الاستعلام آمن لأنه:
-       - يربط فقط مستندات ليس لها user_id
-       - يربط فقط مستندات هذا guest_id بالتحديد
-       - لو حصل أي خطأ، تسجيل الدخول يكمل عادي
+       ربط مستندات الزائر بالحساب
     ========================================================= */
 
     try {
@@ -149,6 +154,46 @@ export async function POST(req: Request) {
       );
     }
 
+    // ============================================
+    // استخراج الاشتراك والخطة الفعالة
+    // ============================================
+    let subscription = null;
+    let plan = null;
+
+    const subs = user.subscriptions;
+
+    if (Array.isArray(subs) && subs.length > 0) {
+      const activeSub = subs.find(
+        (s) =>
+          s.status === "active" &&
+          new Date(s.end_date) >= new Date()
+      );
+
+      if (activeSub) {
+        subscription = {
+          id: activeSub.id,
+          startDate: activeSub.start_date,
+          endDate: activeSub.end_date,
+          status: activeSub.status,
+        };
+
+        const planData = Array.isArray(activeSub.plans)
+          ? activeSub.plans[0]
+          : activeSub.plans;
+
+        if (planData) {
+          plan = {
+            id: planData.id,
+            name: planData.name,
+            price: planData.price,
+            monthlyLimit: planData.monthly_limit,
+            dailyLimit: planData.daily_limit,
+            durationDays: planData.duration_days,
+          };
+        }
+      }
+    }
+
     const response = NextResponse.json({
       success: true,
       user: {
@@ -160,6 +205,8 @@ export async function POST(req: Request) {
         email: user.email,
         role: user.role,
       },
+      subscription,
+      plan,
     });
 
     response.cookies.set({

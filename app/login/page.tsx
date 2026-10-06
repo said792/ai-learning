@@ -96,8 +96,8 @@ export default function LoginPage() {
 
       setSuccess(
         isEn
-          ? "Account created successfully. You can now login."
-          : "تم إنشاء الحساب بنجاح. يمكنك الآن تسجيل الدخول."
+          ? "Account created with a free plan! You can now login."
+          : "تم إنشاء الحساب مع خطة مجانية! يمكنك الآن تسجيل الدخول."
       );
 
       setIsLogin(true);
@@ -146,6 +146,27 @@ export default function LoginPage() {
               : "أنشئ حساباً جديداً"}
           </p>
         </div>
+
+        {/* رسالة الخطة المجانية */}
+        {!isLogin && (
+          <div className="mb-5 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3">
+            <div className="flex items-center gap-2.5">
+              <span className="text-xl">🎁</span>
+              <div>
+                <p className="text-xs font-bold text-emerald-700">
+                  {isEn
+                    ? "Free plan included!"
+                    : "خطة مجانية مضمونة!"}
+                </p>
+                <p className="text-[11px] leading-relaxed text-emerald-600">
+                  {isEn
+                    ? "Your account will be activated with a free plan automatically so you can start immediately."
+                    : "سيتم تفعيل حسابك بخطة مجانية تلقائياً لتبدأ فوراً."}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
 
         <form
           onSubmit={handleSubmit}
