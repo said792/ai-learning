@@ -65,6 +65,9 @@ export default function Home() {
   const { lang, setLang, dir } = useLanguage();
   const isEn = lang === "en";
 
+  /* State to toggle between Landing Page and App */
+  const [started, setStarted] = useState(false);
+
   const [file, setFile] = useState<File | null>(null);
   const [message, setMessage] = useState("");
   const [messageType, setMessageType] = useState<"success" | "error" | "info">("success");
@@ -114,9 +117,6 @@ export default function Home() {
     setExplanation("");
 
     try {
-      /* ★ Step 1: Check duplicate — only for authenticated users.
-       *    If 401 (guest) or any non-200, skip and proceed to upload.
-       */
       const listRes = await fetch("/api/documents");
 
       if (listRes.ok) {
@@ -150,9 +150,7 @@ export default function Home() {
           }
         }
       }
-      /* listRes NOT ok (401 guest / 500 error) → silently skip duplicate check */
 
-      /* ★ Step 2: Normal upload */
       const fd = new FormData();
       fd.append("file", file);
       fd.append("lang", lang);
@@ -456,6 +454,74 @@ Return ONLY valid JSON without Markdown or extra text:
      Render
   ===================================================== */
 
+    // ====================================================================
+  // ★ الصفحة الترحيبية الجديدة (Landing Page)
+  // ====================================================================
+  if (!started) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center bg-gradient-to-b from-slate-50 to-white px-5 text-center" dir={dir}>
+        {/* زر تغيير اللغة */}
+        <div className="absolute top-5 left-5 right-5 flex justify-between">
+           <div />
+           <button
+             onClick={() => setLang(lang === "ar" ? "en" : "ar")}
+             className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-50"
+           >
+             <span>🌐</span>
+             {isEn ? "العربية" : "English"}
+           </button>
+        </div>
+
+        {/* اللوجو أو الأيقونة (تم استبدال الإيموجي بالصورة) */}
+        <div className="mb-6 flex h-28 w-28 items-center justify-center rounded-full bg-white shadow-xl ring-1 ring-slate-100 animate-fadeIn overflow-hidden">
+          <img 
+            src="/icon.png" 
+            alt="Nexora Learning" 
+            className="h-full w-full object-cover"
+          />
+        </div>
+
+        {/* العنوان الرئيسي (الاسم بالإنجليزي دايماً) */}
+        <h1 className="text-3xl font-extrabold tracking-tight text-slate-900 sm:text-4xl animate-fadeIn">
+          {isEn ? "Welcome to Nexora Learning" : "اهلا بك في برنامج Nexora Learning"}
+        </h1>
+
+        {/* العنوان الفرعي */}
+        <p className="mt-3 text-xl font-semibold text-indigo-600 sm:text-2xl animate-fadeIn">
+          {isEn ? "Learning with us has become easy" : "التعلم معنا اصبح سهلا"}
+        </p>
+
+        {/* الوصف */}
+        <p className="mx-auto mt-5 max-w-md text-sm leading-7 text-slate-500 sm:text-base animate-fadeIn">
+          {isEn 
+            ? "Simplifying the learning process. It explains and interprets any document, video, PDF, or PowerPoint effortlessly."
+            : "برنامجك الذكي لتبسيط عملية التعلم. يشرح ويفسر أي مستند، فيديو، PDF أو بوربوينت بكل سهولة ويسر."
+          }
+        </p>
+
+        {/* زر يلا بينا نبدأ */}
+        <button
+          onClick={() => setStarted(true)}
+          className="mt-10 inline-flex items-center gap-2 rounded-xl bg-slate-800 px-8 py-4 text-base font-bold text-white shadow-lg transition-all duration-300 hover:bg-slate-700 hover:shadow-xl hover:scale-105 active:scale-100 sm:text-lg animate-fadeIn"
+        >
+          <span>🚀</span>
+          {isEn ? "Let's Start" : "يلا بينا نبدأ"}
+        </button>
+        
+        <p className="mt-6 text-xs text-slate-400 animate-fadeIn">
+          {isEn ? "Start by uploading your file to explore its content" : "ابدأ برفع ملفك لاستكشاف محتواه بسهولة"}
+        </p>
+
+        <style jsx global>{`
+          @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+          .animate-fadeIn { animation: fadeIn 0.5s ease-out forwards; }
+        `}</style>
+      </div>
+    );
+  }
+  // ====================================================================
+  // ★ الصفحة الرئيسية للتطبيق (بعد الضغط على زر البدء)
+  // ====================================================================
   return (
     <div className="mx-auto max-w-3xl px-5 py-8 pt-20 lg:px-8 lg:pt-8" dir={dir}>
       {/* ========================= Upload ========================= */}
@@ -857,7 +923,7 @@ Return ONLY valid JSON without Markdown or extra text:
                 <InfoRow label={isEn ? "Characters" : "الأحرف"} value={typeof result.textLength === "number" ? result.textLength.toLocaleString() : "—"} dir={dir} />
                 <InfoRow 
                   label={isEn ? "Type" : "النوع"} 
-                  value={
+                  value={ 
                     result.mediaType === "media" 
                       ? (isEn ? "Audio / Video" : "صوت / فيديو") 
                       : (isEn ? "Document" : "مستند")
@@ -897,6 +963,35 @@ function ToolButton({ icon, label, onClick, active, loading }: { icon: string; l
       </span>
       <span className={`text-[11px] font-semibold ${active ? "text-slate-800" : "text-slate-500"}`}>{label}</span>
     </button>
+  );
+}
+
+/* =========================================================
+   Section
+========================================================= */
+function Section({ title, badge, children }: { title: string; badge?: number; children: React.ReactNode }) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white">
+      <div className="flex items-center justify-between border-b border-slate-100 px-5 py-3">
+        <span className="text-xs font-semibold text-slate-700">{title}</span>
+        {typeof badge === "number" && (
+          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-500">{badge}</span>
+        )}
+      </div>
+      <div className="p-5">{children}</div>
+    </div>
+  );
+}
+
+/* =========================================================
+   Info Row
+========================================================= */
+function InfoRow({ label, value, dir }: { label: string; value: string | number; dir: "rtl" | "ltr" }) {
+  return (
+    <div className="flex items-center justify-between px-5 py-3" dir={dir}>
+      <span className="text-xs text-slate-500">{label}</span>
+      <span className="max-w-[60%] truncate text-xs font-medium text-slate-800">{value}</span>
+    </div>
   );
 }
 
@@ -1084,80 +1179,40 @@ function QuizResults({
           else if (q.type === "short_answer") correctAnswerText = String(q.correctAnswer ?? "");
 
           return (
-            <div key={q.id} className={`rounded-lg border px-4 py-3 ${isCorrect ? "border-emerald-200 bg-emerald-50/50" : "border-red-200 bg-red-50/50"}`}>
-              <div className="flex items-start gap-2">
-                <span className="mt-0.5">{isCorrect ? "✅" : "❌"}</span>
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs font-semibold text-slate-800" dir={dir}>{q.question}</p>
-                  {!isCorrect && (
-                    <div className="mt-1.5 space-y-1">
-                      <p className="text-[11px] text-red-500">{isEn ? "Your answer" : "إجابتك"}: {userAnswerText}</p>
-                      <p className="text-[11px] text-emerald-600">{isEn ? "Correct" : "الصحيح"}: {correctAnswerText}</p>
-                    </div>
-                  )}
-                  <p className="mt-2 text-xs text-slate-500">{q.explanation}</p>
-                </div>
+            <div key={q.id} className={`rounded-lg border px-4 py-3 ${isCorrect ? "border-emerald-200 bg-emerald-50" : "border-red-200 bg-red-50"}`}>
+              <p className="text-xs font-bold text-slate-800" dir={dir}>{q.question}</p>
+              <div className="mt-2 space-y-1 text-[11px]" dir={dir}>
+                <p className={isCorrect ? "text-emerald-700" : "text-red-700"}>
+                  {isEn ? "Your answer" : "إجابتك"}: {userAnswerText}
+                </p>
+                {!isCorrect && (
+                  <p className="text-emerald-700">
+                    {isEn ? "Correct answer" : "الإجابة الصحيحة"}: {correctAnswerText}
+                  </p>
+                )}
+                <p className="mt-1 text-slate-500 italic">
+                  {q.explanation}
+                </p>
               </div>
             </div>
           );
         })}
       </div>
 
-      <div className="flex gap-3 p-5 pt-0">
-        <button onClick={onRetry} className="flex-1 rounded-xl bg-slate-800 py-2.5 text-xs font-bold text-white hover:bg-slate-700">{isEn ? "New Exam" : "اختبار جديد"}</button>
-        <button onClick={onGoBack} className="flex-1 rounded-xl border border-slate-200 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-50">{isEn ? "Back" : "رجوع"}</button>
+      <div className="flex gap-3 border-t border-slate-100 p-4">
+        <button
+          onClick={onRetry}
+          className="flex-1 rounded-lg bg-slate-800 py-2.5 text-xs font-semibold text-white hover:bg-slate-700"
+        >
+          {isEn ? "Try New Questions" : "أسئلة جديدة"}
+        </button>
+        <button
+          onClick={onGoBack}
+          className="flex-1 rounded-lg border border-slate-200 py-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+        >
+          {isEn ? "Read Explanation" : "اقرأ الشرح"}
+        </button>
       </div>
-    </div>
-  );
-}
-
-/* =========================================================
-   Section
-========================================================= */
-
-function Section({
-  title,
-  badge,
-  children,
-}: {
-  title: string;
-  badge?: number;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-      <div className="mb-4 flex items-center justify-between">
-        <h3 className="text-sm font-bold text-slate-800">{title}</h3>
-        {badge !== undefined && (
-          <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-bold text-slate-500">
-            {badge}
-          </span>
-        )}
-      </div>
-      {children}
-    </div>
-  );
-}
-
-/* =========================================================
-   Info Row
-========================================================= */
-
-function InfoRow({
-  label,
-  value,
-  dir,
-}: {
-  label: string;
-  value: string;
-  dir: "rtl" | "ltr";
-}) {
-  return (
-    <div className="flex items-center justify-between px-5 py-3">
-      <span className="text-xs text-slate-400">{label}</span>
-      <span className="text-xs font-medium text-slate-700" dir={dir}>
-        {value}
-      </span>
     </div>
   );
 }
