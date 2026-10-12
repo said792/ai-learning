@@ -180,7 +180,7 @@ export default function TopicsPage() {
   const [topicExplanation, setTopicExplanation] = useState("");
   const [loadingExplanation, setLoadingExplanation] = useState(false);
   const [explanationError, setExplanationError] = useState("");
-
+const [filterDocId, setFilterDocId] = useState<string | null>(null);
   /* =====================================================
      Load
   ===================================================== */
@@ -217,7 +217,33 @@ export default function TopicsPage() {
   useEffect(() => {
     load();
   }, [load]);
+  /* =====================================================
+     Open document from URL (?docId=xxx)
+  ===================================================== */
+    useEffect(function () {
+    if (loading || topics.length === 0) return;
 
+    const params = new URLSearchParams(
+      typeof window !== "undefined" ? window.location.search : ""
+    );
+    const docId = params.get("docId");
+    if (!docId) return;
+
+    // فلترة: عرض موضوعات المستند ده بس
+    setFilterDocId(docId);
+
+    const doc = docs.find(function (d) { return d.id === docId; });
+    if (!doc || !doc.analysis || !doc.analysis.topics || doc.analysis.topics.length === 0) return;
+
+    const firstTopic = topics.find(function (t) { return t.documentId === docId; });
+    if (firstTopic && (!sel || sel.documentId !== docId)) {
+      pick(firstTopic);
+
+      if (typeof window !== "undefined" && window.history.replaceState) {
+        window.history.replaceState({}, "", "/topics");
+      }
+    }
+  }, [loading, topics.length, docs.length, sel?.documentId]);
   /* =====================================================
      Pick
   ===================================================== */
@@ -253,13 +279,16 @@ export default function TopicsPage() {
     [cache, sel?.id, selDoc]
   );
 
-  const filtered = q.trim()
-    ? topics.filter(
-        (tp) =>
-          tp.name.toLowerCase().includes(q.toLowerCase()) ||
-          tp.documentName.toLowerCase().includes(q.toLowerCase())
-      )
-    : topics;
+   const filtered = (filterDocId
+    ? topics.filter(function (tp) { return tp.documentId === filterDocId; })
+    : topics
+  ).filter(function (tp) {
+    if (!q.trim()) return true;
+    return (
+      tp.name.toLowerCase().includes(q.toLowerCase()) ||
+      tp.documentName.toLowerCase().includes(q.toLowerCase())
+    );
+  });
 
   /* =====================================================
      Explanation
@@ -400,6 +429,14 @@ export default function TopicsPage() {
                 <span className="rounded-full bg-slate-100 px-3 py-0.5 text-[10px] font-medium text-slate-500">
                   {docs.length} {isEn ? "Documents" : "مستند"}
                 </span>
+                                {filterDocId && (
+                  <button
+                    onClick={function () { setFilterDocId(null); }}
+                    className="rounded-full bg-slate-200 px-3 py-0.5 text-[10px] font-medium text-slate-600 hover:bg-slate-300 transition cursor-pointer"
+                  >
+                    {isEn ? "Show All" : "عرض الكل"}
+                  </button>
+                )}
               </div>
             </div>
           </div>

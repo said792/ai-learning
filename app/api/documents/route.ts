@@ -31,22 +31,15 @@ function hashSessionToken(token: string): string {
 
 async function getCurrentUserId(): Promise<string | null> {
   const cookieStore = await cookies();
-
   const token = cookieStore.get("ai_learning_session")?.value;
 
-  if (!token) {
-    return null;
-  }
+  if (!token) return null;
 
   const tokenHash = hashSessionToken(token);
 
   const { data: session, error } = await supabase
     .from("auth_sessions")
-    .select(`
-      id,
-      user_id,
-      expires_at
-    `)
+    .select("id, user_id, expires_at")
     .eq("token_hash", tokenHash)
     .maybeSingle();
 
@@ -55,25 +48,16 @@ async function getCurrentUserId(): Promise<string | null> {
     return null;
   }
 
-  if (!session) {
-    return null;
-  }
+  if (!session) return null;
 
   if (new Date(session.expires_at) < new Date()) {
-    await supabase
-      .from("auth_sessions")
-      .delete()
-      .eq("id", session.id);
-
+    await supabase.from("auth_sessions").delete().eq("id", session.id);
     return null;
   }
 
   const { data: user, error: userError } = await supabase
     .from("users")
-    .select(`
-      id,
-      is_active
-    `)
+    .select("id, is_active")
     .eq("id", session.user_id)
     .maybeSingle();
 
@@ -82,18 +66,16 @@ async function getCurrentUserId(): Promise<string | null> {
     return null;
   }
 
-  if (!user || user.is_active === false) {
-    return null;
-  }
+  if (!user || user.is_active === false) return null;
 
   return user.id;
 }
 
 /* =========================================================
-   GET
+   GET — جلب المستندات مع دعم الفلترة بالتصنيف
 ========================================================= */
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const userId = await getCurrentUserId();
 
@@ -108,26 +90,30 @@ export async function GET() {
       );
     }
 
-    const { data, error } = await supabase
+    /* --- استخراج categoryId من URL --- */
+    const { searchParams } = new URL(request.url);
+    const categoryId = searchParams.get("categoryId");
+
+    console.log("[Documents] userId:", userId, "categoryId:", categoryId);
+
+    /* --- بناء الاستعلام الأساسي --- */
+    let query = supabase
       .from("documents")
-      .select(`
-        id,
-        file_name,
-        file_type,
-        media_type,
-        file_size,
-        extracted_text,
-        analysis,
-        status,
-        created_at
-      `)
+      .select(
+        "id, file_name, file_type, media_type, file_size, extracted_text, analysis, status, category_id, created_at"
+      )
       .eq("user_id", userId)
-      .eq("status", "completed")
-      .order("created_at", { ascending: false });
+      .eq("status", "completed");
+
+    /* --- فلتر حسب التصنيف لو موجود --- */
+    if (categoryId) {
+      query = query.eq("category_id", categoryId);
+    }
+
+    const { data, error } = await query.order("created_at", { ascending: false });
 
     if (error) {
       console.error("[Documents] Fetch error:", error);
-
       return NextResponse.json(
         {
           success: false,
@@ -137,10 +123,44 @@ export async function GET() {
       );
     }
 
+    const docs = data ?? [];
+
+    console.log("[Documents] Found:", docs.length, "documents");
+
+    /* --- جلب أسماء التصنيفات بشكل منفصل --- */
+    const uniqueCategoryIds = [
+      ...new Set(
+        docs
+          .map((d: any) => d.category_id)
+          .filter(Boolean) as string[]
+      ),
+    ];
+
+    let catMap: Record<string, string> = {};
+
+    if (uniqueCategoryIds.length > 0) {
+      const { data: cats, error: catError } = await supabase
+        .from("categories")
+        .select("id, name")
+        .in("id", uniqueCategoryIds);
+
+      if (!catError && cats) {
+        catMap = Object.fromEntries(
+          cats.map((c: any) => [c.id, c.name])
+        );
+      }
+    }
+
+    /* --- إضافة category_name لكل مستند --- */
+    const documents = docs.map((doc: any) => ({
+      ...doc,
+      category_name: catMap[doc.category_id] || null,
+    }));
+
     return NextResponse.json({
       success: true,
       authenticated: true,
-      documents: data ?? [],
+      documents,
     });
   } catch (error) {
     console.error("[Documents] API error:", error);
