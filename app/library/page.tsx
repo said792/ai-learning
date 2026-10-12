@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
+import { useAuth } from "../context/AuthContext";
 import { useLanguage } from "../context/LanguageContext";
 
 interface Category {
@@ -27,6 +28,7 @@ const PRESET_COLORS = [
 ];
 
 export default function LibraryPage() {
+  const { user, loading: authLoading } = useAuth();
   const { lang, setLang, dir } = useLanguage();
   const isEn = lang === "en";
 
@@ -138,47 +140,55 @@ export default function LibraryPage() {
         body: JSON.stringify({ categoryId: categoryId }),
       });
       await fetchCategories();
-      if (activeCat) {
-        filterDocuments(activeCat.id);
-      } else if (showUncat) {
-        filterDocuments(null);
-      }
+      if (activeCat) filterDocuments(activeCat.id);
+      else if (showUncat) filterDocuments(null);
     } catch {
       // silent
     }
   }
 
   async function deleteDocument(docId: string, fileName: string) {
-    const msg = isEn
-      ? 'Delete "' + fileName + '"?'
-      : 'حذف "' + fileName + '"؟';
+    const msg = isEn ? 'Delete "' + fileName + '"?' : 'حذف "' + fileName + '"؟';
     if (!confirm(msg)) return;
     try {
       const res = await fetch("/api/documents/" + docId, { method: "DELETE" });
       if (res.ok) {
         await fetchCategories();
-        if (activeCat) {
-          filterDocuments(activeCat.id);
-        } else if (showUncat) {
-          filterDocuments(null);
-        }
+        if (activeCat) filterDocuments(activeCat.id);
+        else if (showUncat) filterDocuments(null);
       }
     } catch {
       // silent
     }
   }
 
-  useEffect(function () {
-    fetchCategories();
-  }, []);
+  useEffect(function () { fetchCategories(); }, []);
 
-  if (loading) {
+  /* === Loading === */
+  if (authLoading || loading) {
     return (
       <div className="flex min-h-screen items-center justify-center" dir={dir}>
         <div className="flex flex-col items-center gap-3">
-          <span className="h-8 w-8 animate-spin rounded-full border-3 border-slate-200 border-t-slate-800" />
+          <span className="h-8 w-8 animate-spin rounded-full border-4 border-slate-200 border-t-slate-800" />
           <p className="text-sm text-slate-400">
             {isEn ? "Loading library..." : "جاري تحميل المكتبة..."}
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  /* === Not Logged In === */
+  if (!user) {
+    return (
+      <div className="flex min-h-screen items-center justify-center px-5" dir={dir}>
+        <div className="text-center max-w-md">
+          <div className="mx-auto mb-4 flex h-20 w-20 items-center justify-center rounded-2xl bg-slate-100 text-4xl">🔒</div>
+          <h2 className="text-lg font-bold text-slate-800">
+            {isEn ? "Login Required" : "يجب تسجيل الدخول"}
+          </h2>
+          <p className="mt-2 text-sm text-slate-500">
+            {isEn ? "Login to access your library." : "سجل دخول للوصول لمكتبتك."}
           </p>
         </div>
       </div>
@@ -189,23 +199,24 @@ export default function LibraryPage() {
   const isInside = activeCat !== null || showUncat;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-slate-50" dir={dir}>
-      <div className="mx-auto max-w-4xl px-5 py-8 pt-20 lg:px-8 lg:pt-8">
+    <div className="min-h-screen bg-slate-50" dir={dir}>
+      <div className="mx-auto max-w-4xl px-4 py-6 pt-20 sm:px-6 sm:py-8 lg:px-8 lg:pt-8">
 
-        <div className="mb-6 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-slate-800 to-slate-900 text-xl text-white shadow-lg">
+        {/* ===== Header ===== */}
+        <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-800 text-lg text-white shadow-sm sm:h-12 sm:w-12 sm:rounded-2xl">
               📚
             </div>
-            <div>
-              <h1 className="text-xl font-bold text-slate-900">
+            <div className="min-w-0">
+              <h1 className="text-lg font-bold text-slate-900 sm:text-xl">
                 {isEn ? "My Library" : "مكتبتي"}
               </h1>
-              <div className="mt-1 flex items-center gap-2.5">
-                <span className="rounded-full bg-blue-50 px-3 py-0.5 text-[10px] font-bold text-blue-600 ring-1 ring-blue-100">
-                  {categories.length} {isEn ? "categories" : "كتالوج"}
+              <div className="mt-0.5 flex items-center gap-2">
+                <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-bold text-blue-600 ring-1 ring-blue-100">
+                  {categories.length} {isEn ? "categories" : "تصنيف"}
                 </span>
-                <span className="rounded-full bg-slate-100 px-3 py-0.5 text-[10px] font-medium text-slate-500">
+                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-500">
                   {totalDocs} {isEn ? "files" : "ملف"}
                 </span>
               </div>
@@ -214,48 +225,51 @@ export default function LibraryPage() {
           <div className="flex items-center gap-2">
             <button
               onClick={function () { setLang(lang === "ar" ? "en" : "ar"); }}
-              className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-medium text-slate-600 shadow-sm transition hover:bg-white"
+              className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 shadow-sm transition hover:bg-slate-50"
             >
-              🌐 {isEn ? "العربية" : "English"}
+              🌐 <span className="hidden sm:inline">{isEn ? "العربية" : "English"}</span>
             </button>
             <button
               onClick={function () { setShowCreate(true); }}
-              className="flex items-center gap-2 rounded-xl bg-slate-800 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-slate-700"
+              className="flex items-center gap-1.5 rounded-lg bg-slate-800 px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-slate-700"
             >
-              ➕ {isEn ? "New Category" : "كتالوج جديد"}
+              ➕ <span className="hidden sm:inline">{isEn ? "New Category" : "تصنيف جديد"}</span>
             </button>
           </div>
         </div>
 
+        {/* ===== Create Category ===== */}
         {showCreate && (
-          <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h3 className="text-sm font-bold text-slate-800 mb-3">
-              {isEn ? "Create New Category" : "إنشاء كتالوج جديد"}
+          <div className="mb-6 rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+            <h3 className="mb-3 text-sm font-bold text-slate-800">
+              {isEn ? "Create New Category" : "إنشاء تصنيف جديد"}
             </h3>
-            <div className="flex gap-2">
+            <div className="flex flex-col gap-2 sm:flex-row">
               <input
                 value={newName}
                 onChange={function (e) { setNewName(e.target.value); }}
-                placeholder={isEn ? "Category name..." : "اسم الكتالوج..."}
+                placeholder={isEn ? "Category name..." : "اسم التصنيف..."}
                 dir={dir}
-                className="flex-1 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-800 outline-none transition focus:border-slate-400 focus:bg-white"
+                className="flex-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-slate-400 focus:bg-white"
                 onKeyDown={function (e) {
                   if (e.key === "Enter" && newName.trim()) createCategory();
                 }}
               />
-              <button
-                onClick={createCategory}
-                disabled={!newName.trim() || creating}
-                className="rounded-xl bg-slate-800 px-5 py-2.5 text-xs font-semibold text-white hover:bg-slate-700 disabled:bg-slate-300"
-              >
-                {creating ? "..." : isEn ? "Create" : "إنشاء"}
-              </button>
-              <button
-                onClick={function () { setShowCreate(false); setNewName(""); }}
-                className="rounded-xl border border-slate-200 px-4 py-2.5 text-xs font-medium text-slate-500 hover:bg-slate-50"
-              >
-                ✕
-              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={createCategory}
+                  disabled={!newName.trim() || creating}
+                  className="flex-1 rounded-lg bg-slate-800 px-4 py-2.5 text-xs font-semibold text-white hover:bg-slate-700 disabled:bg-slate-300 sm:flex-none"
+                >
+                  {creating ? "..." : isEn ? "Create" : "إنشاء"}
+                </button>
+                <button
+                  onClick={function () { setShowCreate(false); setNewName(""); }}
+                  className="rounded-lg border border-slate-200 px-4 py-2.5 text-xs font-medium text-slate-500 hover:bg-slate-50"
+                >
+                  ✕
+                </button>
+              </div>
             </div>
             <div className="mt-3 flex flex-wrap gap-2">
               {PRESET_COLORS.map(function (c) {
@@ -263,7 +277,7 @@ export default function LibraryPage() {
                   <button
                     key={c}
                     onClick={function () { setNewColor(c); }}
-                    className={"h-7 w-7 rounded-full transition " + (newColor === c ? "ring-2 ring-offset-2 ring-slate-800" : "hover:scale-110")}
+                    className={"h-6 w-6 rounded-full transition sm:h-7 sm:w-7 " + (newColor === c ? "ring-2 ring-offset-2 ring-slate-800" : "hover:scale-110")}
                     style={{ backgroundColor: c }}
                   />
                 );
@@ -272,22 +286,29 @@ export default function LibraryPage() {
           </div>
         )}
 
+        {/* ===== Inside Category View ===== */}
         {isInside && (
-          <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
-            <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
-              <button
-                onClick={function () { setActiveCat(null); setShowUncat(false); setDocuments([]); }}
-                className="flex items-center gap-2 text-xs font-semibold text-slate-600 hover:text-slate-800 transition"
-              >
-                ← {isEn ? "Back" : "رجوع"}
-              </button>
-              <div className="flex items-center gap-3">
-                {activeCat && (
-                  <span className="h-3 w-3 rounded-full" style={{ backgroundColor: activeCat.color }} />
-                )}
-                <span className="text-sm font-bold text-slate-800">
-                  {showUncat ? (isEn ? "Uncategorized" : "بدون تصنيف") : (activeCat ? activeCat.name : "")}
-                </span>
+          <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+            {/* Category Header */}
+            <div className="flex flex-col gap-2 border-b border-slate-100 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:py-4">
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={function () { setActiveCat(null); setShowUncat(false); setDocuments([]); }}
+                  className="flex items-center gap-1 text-xs font-semibold text-slate-600 hover:text-slate-800 transition"
+                >
+                  ← {isEn ? "Back" : "رجوع"}
+                </button>
+                <span className="text-slate-300">|</span>
+                <div className="flex items-center gap-2">
+                  {activeCat && (
+                    <span className="h-3 w-3 shrink-0 rounded-full" style={{ backgroundColor: activeCat.color }} />
+                  )}
+                  <span className="text-sm font-bold text-slate-800 truncate">
+                    {showUncat ? (isEn ? "Uncategorized" : "بدون تصنيف") : (activeCat ? activeCat.name : "")}
+                  </span>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
                 <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-medium text-slate-500">
                   {documents.length} {isEn ? "files" : "ملف"}
                 </span>
@@ -296,25 +317,27 @@ export default function LibraryPage() {
                     onClick={function () { deleteCategory(activeCat.id, activeCat.name); }}
                     className="rounded-lg px-2 py-1 text-[10px] text-red-400 hover:bg-red-50 hover:text-red-600 transition"
                   >
-                    🗑️
+                    🗑️ {isEn ? "Delete" : "حذف"}
                   </button>
                 )}
               </div>
             </div>
+
+            {/* Documents List */}
             <div className="divide-y divide-slate-50">
               {docLoading ? (
                 <div className="flex items-center justify-center py-16">
                   <span className="h-6 w-6 animate-spin rounded-full border-2 border-slate-200 border-t-slate-800" />
                 </div>
               ) : documents.length === 0 ? (
-                <div className="flex flex-col items-center py-16 text-center">
-                  <span className="text-4xl mb-3">📭</span>
+                <div className="flex flex-col items-center py-12 text-center sm:py-16">
+                  <span className="mb-3 text-4xl">📭</span>
                   <p className="text-sm text-slate-400">
                     {isEn ? "No documents yet" : "لا توجد مستندات"}
                   </p>
                   <Link
                     href="/"
-                    className="mt-3 rounded-xl bg-slate-800 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-700 transition"
+                    className="mt-3 rounded-lg bg-slate-800 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-700 transition"
                   >
                     {isEn ? "Upload a file" : "ارفع ملف"}
                   </Link>
@@ -322,29 +345,29 @@ export default function LibraryPage() {
               ) : (
                 documents.map(function (doc) {
                   return (
-                    <div key={doc.id} className="flex items-center justify-between px-6 py-4 hover:bg-slate-50 transition">
+                    <div key={doc.id} className="flex flex-col gap-2 px-4 py-3 hover:bg-slate-50 transition sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:py-4">
                       <div className="flex min-w-0 items-center gap-3">
-                        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-lg">
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-base sm:h-10 sm:w-10 sm:rounded-xl sm:text-lg">
                           {doc.media_type === "media" ? "🎬" : "📄"}
                         </div>
                         <div className="min-w-0">
-<Link
-  href={"/topics?docId=" + doc.id}
-  className="truncate text-sm font-medium text-slate-700 hover:text-blue-600 transition"
->
-  {doc.file_name}
-</Link>
-                          <p className="text-[11px] text-slate-400">
+                          <Link
+                            href={"/topics?docId=" + doc.id}
+                            className="truncate text-sm font-medium text-slate-700 hover:text-blue-600 transition"
+                          >
+                            {doc.file_name}
+                          </Link>
+                          <p className="text-[10px] text-slate-400 sm:text-[11px]">
                             {new Date(doc.created_at).toLocaleDateString(isEn ? "en-US" : "ar-EG")}
-                            {doc.status === "completed" && <span className="ml-2 text-emerald-500">✓</span>}
+                            {doc.status === "completed" && <span className="ml-1.5 text-emerald-500">✓</span>}
                           </p>
                         </div>
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 pl-12 sm:pl-0">
                         <select
                           value={doc.category_id || ""}
                           onChange={function (e) { moveDocument(doc.id, e.target.value || null); }}
-                          className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[10px] text-slate-600 outline-none"
+                          className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[10px] text-slate-600 outline-none sm:w-auto sm:text-[11px]"
                         >
                           <option value="">{isEn ? "Uncategorized" : "بدون تصنيف"}</option>
                           {categories.map(function (cat) {
@@ -353,7 +376,7 @@ export default function LibraryPage() {
                         </select>
                         <button
                           onClick={function () { deleteDocument(doc.id, doc.file_name); }}
-                          className="rounded-lg px-2 py-1.5 text-[10px] text-slate-400 hover:bg-red-50 hover:text-red-500 transition"
+                          className="shrink-0 rounded-lg px-2 py-1.5 text-[10px] text-slate-400 hover:bg-red-50 hover:text-red-500 transition"
                         >
                           🗑️
                         </button>
@@ -366,48 +389,49 @@ export default function LibraryPage() {
           </div>
         )}
 
+        {/* ===== Category Grid ===== */}
         {!isInside && (
           categories.length === 0 && uncatCount === 0 ? (
-            <div className="flex flex-col items-center py-20 text-center">
-              <span className="text-6xl mb-4">📂</span>
-              <p className="text-lg font-bold text-slate-700">
+            <div className="flex flex-col items-center py-16 text-center sm:py-20">
+              <span className="mb-4 text-5xl sm:text-6xl">📂</span>
+              <p className="text-base font-bold text-slate-700 sm:text-lg">
                 {isEn ? "Your library is empty" : "مكتبتك فارغة"}
               </p>
               <p className="mt-2 text-sm text-slate-400">
-                {isEn ? "Create a category and upload files." : "أنشئ كتالوج وارفع ملفات."}
+                {isEn ? "Create a category and upload files." : "أنشئ تصنيف وارفع ملفات."}
               </p>
-              <div className="mt-6 flex gap-3">
+              <div className="mt-6 flex flex-col gap-2 sm:flex-row sm:gap-3">
                 <button
                   onClick={function () { setShowCreate(true); }}
-                  className="rounded-xl bg-slate-800 px-5 py-2.5 text-xs font-semibold text-white hover:bg-slate-700 transition"
+                  className="rounded-lg bg-slate-800 px-5 py-2.5 text-xs font-semibold text-white hover:bg-slate-700 transition"
                 >
-                  ➕ {isEn ? "Create Category" : "إنشاء كتالوج"}
+                  ➕ {isEn ? "Create Category" : "إنشاء تصنيف"}
                 </button>
                 <Link
                   href="/"
-                  className="rounded-xl border border-slate-200 px-5 py-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
+                  className="rounded-lg border border-slate-200 px-5 py-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition text-center"
                 >
                   📄 {isEn ? "Upload File" : "رفع ملف"}
                 </Link>
               </div>
             </div>
           ) : (
-            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4">
               {categories.map(function (cat) {
                 return (
                   <button
                     key={cat.id}
                     onClick={function () { setActiveCat(cat); setShowUncat(false); filterDocuments(cat.id); }}
-                    className="group flex flex-col items-center gap-3 rounded-2xl border-2 border-slate-200 bg-white p-6 text-center transition-all hover:border-slate-300 hover:shadow-md"
+                    className="group flex flex-col items-center gap-2 rounded-xl border-2 border-slate-200 bg-white p-4 text-center transition-all hover:border-slate-300 hover:shadow-md sm:gap-3 sm:p-6"
                   >
                     <div
-                      className="flex h-14 w-14 items-center justify-center rounded-2xl text-2xl text-white shadow-sm transition-transform group-hover:scale-110"
+                      className="flex h-11 w-11 items-center justify-center rounded-xl text-xl text-white shadow-sm transition-transform group-hover:scale-110 sm:h-14 sm:w-14 sm:rounded-2xl sm:text-2xl"
                       style={{ backgroundColor: cat.color }}
                     >
                       📁
                     </div>
-                    <p className="text-sm font-semibold text-slate-700 truncate w-full">{cat.name}</p>
-                    <p className="text-[11px] text-slate-400">
+                    <p className="w-full truncate text-xs font-semibold text-slate-700 sm:text-sm">{cat.name}</p>
+                    <p className="text-[10px] text-slate-400 sm:text-[11px]">
                       {cat.documentCount} {isEn ? "files" : "ملف"}
                     </p>
                   </button>
@@ -417,13 +441,13 @@ export default function LibraryPage() {
               {uncatCount > 0 && (
                 <button
                   onClick={function () { setActiveCat(null); setShowUncat(true); filterDocuments(null); }}
-                  className="group flex flex-col items-center gap-3 rounded-2xl border-2 border-dashed border-slate-200 bg-slate-50/50 p-6 text-center transition-all hover:border-slate-300 hover:bg-slate-50"
+                  className="group flex flex-col items-center gap-2 rounded-xl border-2 border-dashed border-slate-200 bg-slate-50/50 p-4 text-center transition-all hover:border-slate-300 hover:bg-slate-50 sm:gap-3 sm:p-6"
                 >
-                  <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-200 text-2xl">📂</div>
-                  <p className="text-sm font-semibold text-slate-500">
+                  <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-200 text-xl sm:h-14 sm:w-14 sm:rounded-2xl sm:text-2xl">📂</div>
+                  <p className="text-xs font-semibold text-slate-500 sm:text-sm">
                     {isEn ? "Uncategorized" : "بدون تصنيف"}
                   </p>
-                  <p className="text-[11px] text-slate-400">
+                  <p className="text-[10px] text-slate-400 sm:text-[11px]">
                     {uncatCount} {isEn ? "files" : "ملف"}
                   </p>
                 </button>
@@ -431,17 +455,16 @@ export default function LibraryPage() {
 
               <button
                 onClick={function () { setShowCreate(true); }}
-                className="flex flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed border-slate-300/50 p-6 text-center transition-all hover:border-slate-400 hover:bg-slate-50/50"
+                className="flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-slate-300/50 p-4 text-center transition-all hover:border-slate-400 hover:bg-slate-50/50 sm:gap-3 sm:p-6"
               >
-                <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-100 text-2xl">➕</div>
-                <p className="text-sm font-medium text-slate-400">
-                  {isEn ? "New Category" : "كتالوج جديد"}
+                <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-100 text-xl sm:h-14 sm:w-14 sm:rounded-2xl sm:text-2xl">➕</div>
+                <p className="text-xs font-medium text-slate-400 sm:text-sm">
+                  {isEn ? "New Category" : "تصنيف جديد"}
                 </p>
               </button>
             </div>
           )
         )}
-
       </div>
     </div>
   );
