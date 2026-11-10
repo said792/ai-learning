@@ -1,3 +1,4 @@
+
 import type { CapacitorConfig } from "@capacitor/cli";
 
 const config: CapacitorConfig = {
@@ -6,7 +7,7 @@ const config: CapacitorConfig = {
   webDir: "public",
 
   server: {
-    url: "https://ai-learning-sandy.vercel.app/",
+    url: "https://ai-learning-sandy.vercel.app",
     cleartext: false,
   },
 };

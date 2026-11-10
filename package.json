@@ -10,6 +10,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@capacitor/android": "^8.6.0",
+    "@capacitor/core": "^8.6.0",
     "@google/genai": "^1.16.0",
     "@napi-rs/canvas": "^0.1.65",
     "@resvg/resvg-js": "^2.6.2",

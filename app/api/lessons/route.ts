@@ -23,8 +23,7 @@ import {
 import type { TtsOptions } from "@/lib/ai/tts";
 
 export const runtime = "nodejs";
-export const maxDuration = 600;
-
+export const maxDuration = 300;
 /* =========================================================
    GET /api/lessons — قائمة دروس المستخدم
    POST /api/lessons — إنشاء درس جديد (صوت / فيديو)
