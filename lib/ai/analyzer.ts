@@ -1,4 +1,4 @@
-import { GoogleGenAI } from "@google/genai";
+import { generateJSON } from "@/lib/ai/gemini";
 
 /* =========================================================
    Types
@@ -94,15 +94,9 @@ export interface LearningAnalysis {
 
 /* =========================================================
    Gemini Configuration
+   (الموديل وتدوير المفاتيح مركزيان في lib/ai/gemini.ts
+    — اضبط GEMINI_MODEL في .env.local لتغيير الموديل)
 ========================================================= */
-
-/*
- * اسم الموديل المستخدم للتحليل.
- *
- * لا تغيّر هذا إلى gemini-2.5-flash-lite.
- */
-const GEMINI_MODEL =
-  "gemini-3.1-flash-lite";
 
 /*
  * الحد الأقصى للنص الذي سيتم إرساله في طلب واحد.
@@ -112,110 +106,7 @@ const GEMINI_MODEL =
  */
 const MAX_INPUT_CHARS = 120_000;
 
-/*
- * عدد مرات المحاولة لكل مفتاح.
- *
- * مثال:
- *
- * KEY_1
- *  ├─ محاولة 1
- *  └─ محاولة 2
- *
- * ثم KEY_2 ...
- */
-const MAX_RETRIES_PER_KEY = 2;
-
-/*
- * أقصى عدد مفاتيح نبحث عنها.
- *
- * يمكنك وضع:
- *
- * GEMINI_API_KEY_1
- * GEMINI_API_KEY_2
- * ...
- * GEMINI_API_KEY_20
- *
- * أو أكثر إذا أردت.
- */
-const MAX_API_KEYS = 50;
-
-/*
- * وقت انتظار بسيط بين المحاولات.
- *
- * يتم زيادة الوقت تدريجيًا.
- */
-const RETRY_BASE_DELAY_MS = 1_500;
-
 /* =========================================================
-   Multi-Key Gemini
-========================================================= */
-
-/**
- * قراءة جميع مفاتيح Gemini من .env.local
- *
- * يدعم:
- *
- * GEMINI_API_KEY_1
- * GEMINI_API_KEY_2
- * GEMINI_API_KEY_3
- * ...
- *
- * ويتم تجاهل أي مفتاح فارغ.
- */
-function getGeminiApiKeys(): string[] {
-  const keys: string[] = [];
-
-  for (
-    let index = 1;
-    index <= MAX_API_KEYS;
-    index++
-  ) {
-    const key =
-      process.env[
-        `GEMINI_API_KEY_${index}`
-      ]?.trim();
-
-    if (key) {
-      keys.push(key);
-    }
-  }
-
-  /*
-   * دعم احتياطي للمفتاح القديم.
-   *
-   * لو كان عندك GEMINI_API_KEY فقط،
-   * سيظل البرنامج يعمل.
-   *
-   * لكن الأفضل استخدام:
-   *
-   * GEMINI_API_KEY_1
-   * GEMINI_API_KEY_2
-   * ...
-   */
-  const legacyKey =
-    process.env.GEMINI_API_KEY?.trim();
-
-  if (
-    legacyKey &&
-    !keys.includes(legacyKey)
-  ) {
-    keys.push(legacyKey);
-  }
-
-  return keys;
-}
-
-/**
- * إنشاء Gemini Client باستخدام مفتاح محدد.
- */
-function createGeminiClient(
-  apiKey: string
-): GoogleGenAI {
-  return new GoogleGenAI({
-    apiKey,
-  });
-}
-
 /* =========================================================
    Learning Analysis JSON Schema
 ========================================================= */
@@ -573,242 +464,40 @@ export async function analyzeDocument(
 }
 
 /* =========================================================
-   Gemini Analyzer - Multi Key
+   Gemini Analyzer (تدوير المفاتيح المركزي)
 ========================================================= */
 
 async function analyzeWithGemini(
   text: string,
   lang: AnalysisLang
 ): Promise<LearningAnalysis> {
-  const apiKeys =
-    getGeminiApiKeys();
-
-  /*
-   * لا يوجد أي مفتاح.
-   */
-  if (apiKeys.length === 0) {
-    throw new Error(
-      "لم يتم العثور على أي مفتاح Gemini. أضف GEMINI_API_KEY_1 في ملف .env.local"
-    );
-  }
-
   /*
    * حماية من إرسال نص ضخم جدًا.
    */
   const inputText =
     text.length > MAX_INPUT_CHARS
-      ? text.slice(
-          0,
-          MAX_INPUT_CHARS
-        ) +
+      ? text.slice(0, MAX_INPUT_CHARS) +
         (lang === "ar"
           ? "\n\n[تم اختصار نهاية المستند بسبب طول المحتوى]"
           : "\n\n[End of document truncated due to length]")
       : text;
 
-  const prompt =
-    buildAnalysisPrompt(
-      inputText,
-      lang
-    );
+  const prompt = buildAnalysisPrompt(inputText, lang);
 
-  let lastError: unknown =
-    null;
+  console.log(`[Gemini] بدء تحليل المستند (${text.length} حرف)...`);
 
-  /*
-   * تجربة المفاتيح واحدًا تلو الآخر.
-   *
-   * إذا فشل KEY_1 بسبب:
-   *
-   * 429
-   * quota
-   * rate limit
-   * resource exhausted
-   *
-   * ينتقل تلقائيًا إلى KEY_2.
-   */
-  for (
-    let keyIndex = 0;
-    keyIndex < apiKeys.length;
-    keyIndex++
-  ) {
-    const apiKey =
-      apiKeys[keyIndex];
-
-    const keyNumber =
-      keyIndex + 1;
-
-    const ai =
-      createGeminiClient(
-        apiKey
-      );
-
-    console.log(
-      `[Gemini] محاولة استخدام المفتاح رقم ${keyNumber} من ${apiKeys.length}`
-    );
-
-    for (
-      let attempt = 1;
-      attempt <= MAX_RETRIES_PER_KEY;
-      attempt++
-    ) {
-      try {
-        const result =
-          await generateGeminiAnalysis(
-            ai,
-            prompt
-          );
-
-        console.log(
-          `[Gemini] تم التحليل بنجاح باستخدام المفتاح رقم ${keyNumber}`
-        );
-
-        return result;
-      } catch (error) {
-        lastError =
-          error;
-
-        const errorMessage =
-          getErrorMessage(
-            error
-          );
-
-        console.error(
-          `[Gemini] فشل المفتاح رقم ${keyNumber} - المحاولة ${attempt}/${MAX_RETRIES_PER_KEY}`,
-          errorMessage
-        );
-
-        /*
-         * إذا كان الخطأ يشير إلى أن المفتاح أو الحصة
-         * غير متاحة، نترك هذا المفتاح وننتقل للمفتاح التالي.
-         */
-        if (
-          isQuotaOrRateLimitError(
-            error
-          )
-        ) {
-          console.warn(
-            `[Gemini] المفتاح رقم ${keyNumber} وصل إلى الحد أو معدل الطلبات. الانتقال للمفتاح التالي.`
-          );
-
-          break;
-        }
-
-        /*
-         * أخطاء المصادقة:
-         *
-         * API key invalid
-         * permission denied
-         *
-         * لا فائدة من إعادة المحاولة بنفس المفتاح.
-         */
-        if (
-          isAuthenticationError(
-            error
-          )
-        ) {
-          console.warn(
-            `[Gemini] المفتاح رقم ${keyNumber} غير صالح أو غير مصرح به. الانتقال للمفتاح التالي.`
-          );
-
-          break;
-        }
-
-        /*
-         * الأخطاء الأخرى:
-         *
-         * نحاول مرة أخرى إذا لم نصل للحد.
-         */
-        if (
-          attempt <
-          MAX_RETRIES_PER_KEY
-        ) {
-          const delay =
-            RETRY_BASE_DELAY_MS *
-            attempt;
-
-          console.log(
-            `[Gemini] إعادة المحاولة بعد ${delay}ms...`
-          );
-
-          await sleep(
-            delay
-          );
-        }
-      }
-    }
-  }
-
-  /*
-   * جميع المفاتيح فشلت.
-   */
-  const finalMessage =
-    getErrorMessage(
-      lastError
-    );
-
-  throw new Error(
-    `فشل تحليل المستند باستخدام جميع مفاتيح Gemini (${apiKeys.length}). آخر خطأ: ${finalMessage}`
+  const parsed = await generateJSON<unknown>(
+    prompt,
+    learningAnalysisSchema as Record<string, unknown>,
+    { temperature: 0.4, maxOutputTokens: 65536 }
   );
+
+  console.log("[Gemini] تم التحليل بنجاح");
+
+  return normalizeLearningAnalysis(parsed);
 }
 
 /* =========================================================
-   Gemini Request
-========================================================= */
-
-async function generateGeminiAnalysis(
-  ai: GoogleGenAI,
-  prompt: string
-): Promise<LearningAnalysis> {
-  const response =
-    await ai.models.generateContent(
-      {
-        model:
-          GEMINI_MODEL,
-
-        contents:
-          prompt,
-
-        config: {
-          responseMimeType:
-            "application/json",
-
-          responseSchema:
-            learningAnalysisSchema,
-        },
-      }
-    );
-
-  const raw =
-    response.text?.trim();
-
-  if (!raw) {
-    throw new Error(
-      "Gemini أعاد استجابة فارغة"
-    );
-  }
-
-  let parsed: unknown;
-
-  try {
-    parsed =
-      JSON.parse(raw);
-  } catch {
-    console.error(
-      "Gemini returned invalid JSON:",
-      raw
-    );
-
-    throw new Error(
-      "استجابة Gemini ليست JSON صالح"
-    );
-  }
-
-  return normalizeLearningAnalysis(
-    parsed
-  );
-}
-
 /* =========================================================
    Prompt
 ========================================================= */
@@ -981,129 +670,6 @@ Basic rules:
 
 ----------------- END DOCUMENT -----------------
 `;
-}
-
-/* =========================================================
-   Error Detection
-========================================================= */
-
-/**
- * تحويل أي Error إلى رسالة مفهومة.
- */
-function getErrorMessage(
-  error: unknown
-): string {
-  if (
-    error instanceof Error
-  ) {
-    return error.message;
-  }
-
-  if (
-    typeof error ===
-    "string"
-  ) {
-    return error;
-  }
-
-  try {
-    return JSON.stringify(
-      error
-    );
-  } catch {
-    return String(error);
-  }
-}
-
-/**
- * تحديد أخطاء الـ quota / rate limit.
- */
-function isQuotaOrRateLimitError(
-  error: unknown
-): boolean {
-  const message =
-    getErrorMessage(
-      error
-    ).toLowerCase();
-
-  return (
-    message.includes(
-      "429"
-    ) ||
-    message.includes(
-      "resource_exhausted"
-    ) ||
-    message.includes(
-      "resource exhausted"
-    ) ||
-    message.includes(
-      "quota"
-    ) ||
-    message.includes(
-      "rate limit"
-    ) ||
-    message.includes(
-      "ratelimit"
-    ) ||
-    message.includes(
-      "too many requests"
-    ) ||
-    message.includes(
-      "limit exceeded"
-    )
-  );
-}
-
-/**
- * تحديد أخطاء المصادقة.
- */
-function isAuthenticationError(
-  error: unknown
-): boolean {
-  const message =
-    getErrorMessage(
-      error
-    ).toLowerCase();
-
-  return (
-    message.includes(
-      "401"
-    ) ||
-    message.includes(
-      "403"
-    ) ||
-    message.includes(
-      "unauthorized"
-    ) ||
-    message.includes(
-      "permission denied"
-    ) ||
-    message.includes(
-      "api key not valid"
-    ) ||
-    message.includes(
-      "invalid api key"
-    ) ||
-    message.includes(
-      "api_key_invalid"
-    )
-  );
-}
-
-/* =========================================================
-   Delay
-========================================================= */
-
-function sleep(
-  milliseconds: number
-): Promise<void> {
-  return new Promise(
-    (resolve) =>
-      setTimeout(
-        resolve,
-        milliseconds
-      )
-  );
 }
 
 /* =========================================================

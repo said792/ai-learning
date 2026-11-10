@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "../context/AuthContext";
@@ -10,6 +10,8 @@ import ThemeSwitcher from "./ThemeSwitcher";
 const links = [
   { href: "/", labelKey: "upload", icon: "upload" },
   { href: "/library", labelKey: "library", icon: "library" },
+  { href: "/lessons", labelKey: "lessons", icon: "video" },
+  { href: "/topics", labelKey: "topics", icon: "topics" },
   { href: "/ask", labelKey: "ask", icon: "brain" },
   { href: "/exams", labelKey: "exams", icon: "exam" },
   { href: "/subscribe", labelKey: "subscribe", icon: "crown" },
@@ -40,6 +42,18 @@ function NavIcon({ name }: { name: string }) {
         <path strokeLinecap="round" strokeLinejoin="round" d="M4.26 10.147a60.436 60.436 0 00-.491 6.347A48.627 48.627 0 0112 20.904a48.627 48.627 0 018.232-4.3 60.46 60.46 0 00-.491-6.347m-15.482 0a50.57 50.57 0 00-2.658-.813A59.905 59.905 0 0112 3.493a59.902 59.902 0 0110.399 5.84c-.896 0-1.78-.192-2.658-.513m-15.482 0A50.697 50.697 0 0112 13.5a50.702 50.702 0 017.74-3.342M6.75 15a.75.75 0 100-1.5.75.75 0 000 1.5zm0 0v-3.675A75.37 75.37 0 0112 15.75a75.39 75.39 0 016.75 0v3.675m0 0v-3.675A75.376 75.376 0 0012 6.375a75.376 75.376 0 00-6.75 0v3.675m0 0a75.376 75.376 0 016.75 0v-3.675M3.75 15a.75.75 0 100-1.5.75.75 0 000 1.5z" />
       </svg>
     );
+  if (name === "video")
+    return (
+      <svg className="h-4.5 w-4.5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" />
+      </svg>
+    );
+  if (name === "topics")
+    return (
+      <svg className="h-4.5 w-4.5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M9.568 3H5.25A2.25 2.25 0 003 5.25v4.318c0 .597.237 1.17.659 1.591l9.581 9.581a2.25 2.25 0 003.182 0l4.318-4.318a2.25 2.25 0 000-3.182L9.159 3.659A2.25 2.25 0 007.568 3zM6 6h.008v.008H6V6zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z" />
+      </svg>
+    );
   if (name === "crown")
     return (
       <svg className="h-4.5 w-4.5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
@@ -61,6 +75,65 @@ export default function Sidebar() {
   const { lang, setLang, dir } = useLanguage();
   const isEn = lang === "en";
 
+  /* حالة الاشتراك — عشان المستخدم يعرف باقيله كام يوم وينتهي امتى من غير ما يفتح صفحة الاشتراكات */
+  const [sub, setSub] = useState<{
+    planName: string;
+    daysRemaining: number;
+    endDate: string | null;
+  } | null>(null);
+
+  /* إشعار الأدمن — عدد طلبات الدفع المعلقة اللي بتستنى مراجعته */
+  const [pendingPayments, setPendingPayments] = useState(0);
+
+  useEffect(() => {
+    if (!user) {
+      setSub(null);
+      setPendingPayments(0);
+      return;
+    }
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const res = await fetch("/api/subscription", { credentials: "include" });
+        const data = await res.json();
+
+        if (!cancelled && data.subscription && data.plan) {
+          setSub({
+            planName: data.plan.name || "",
+            daysRemaining: data.subscription.daysRemaining ?? 0,
+            endDate: data.subscription.endDate || null,
+          });
+        }
+      } catch {
+        /* تجاهل */
+      }
+    })();
+
+    /* الأدمن بس: جلب عدد طلبات الدفع المعلقة */
+    if (user.role === "admin") {
+      (async () => {
+        try {
+          const res = await fetch("/api/admin/payments?status=pending", {
+            credentials: "include",
+          });
+          if (!res.ok) return;
+          const data = await res.json();
+          if (!cancelled) {
+            setPendingPayments((data.payments || []).length);
+          }
+        } catch {
+          /* تجاهل */
+        }
+      })();
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
+
   const isActive = (href: string) =>
     href === "/" ? pathname === "/" : pathname.startsWith(href);
 
@@ -80,6 +153,8 @@ export default function Sidebar() {
       ask: isEn ? "Ask Me" : "اسألني",
       exams: isEn ? "Exams" : "اختبارات",
       subscribe: isEn ? "Subscription" : "الاشتراك",
+      lessons: isEn ? "My Lessons" : "دروسي",
+      topics: isEn ? "Topics" : "المواضيع",
     };
     return map[key] || key;
   };
@@ -173,6 +248,65 @@ export default function Sidebar() {
 
         <div className="mx-4 h-px bg-border" />
 
+        {/* ---- حالة الاشتراك: باقي كام يوم وينتهي امتى ---- */}
+        {user && sub && (() => {
+          const isLifetime = sub.daysRemaining > 3650;
+          const expiring = !isLifetime && sub.daysRemaining <= 3;
+
+          return (
+            <div className="px-3 pt-4">
+              <Link
+                href="/subscribe"
+                onClick={() => setOpen(false)}
+                className={`block rounded-xl border px-3 py-2.5 transition hover:shadow-sm ${
+                  expiring
+                    ? "border-amber-300 bg-amber-50"
+                    : "border-emerald-200 bg-emerald-50"
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <p
+                    className={`truncate text-[11px] font-bold ${
+                      expiring ? "text-amber-700" : "text-emerald-700"
+                    }`}
+                  >
+                    👑 {sub.planName || (isEn ? "Subscription" : "اشتراك")}
+                  </p>
+                  <span
+                    className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                      expiring
+                        ? "bg-amber-200 text-amber-800"
+                        : "bg-emerald-200 text-emerald-800"
+                    }`}
+                  >
+                    {isLifetime
+                      ? isEn
+                        ? "Lifetime ✓"
+                        : "مدى الحياة ✓"
+                      : isEn
+                      ? `${sub.daysRemaining}d left`
+                      : `باقي ${sub.daysRemaining} يوم`}
+                  </span>
+                </div>
+                {!isLifetime && sub.endDate && (
+                  <p className="mt-1 text-[10px] font-medium text-slate-600">
+                    {isEn ? "Expires" : "ينتهي في"}{" "}
+                    {new Date(sub.endDate).toLocaleDateString(
+                      isEn ? "en-US" : "ar-EG",
+                      { year: "numeric", month: "short", day: "numeric" }
+                    )}
+                  </p>
+                )}
+                {expiring && (
+                  <p className="mt-1 text-[10px] font-semibold text-amber-600">
+                    ⏰ {isEn ? "Renew now — counted from your payment day" : "اشتراكك على وشك الانتهاء — جدّد دلوقتي قبل ما يخلص"}
+                  </p>
+                )}
+              </Link>
+            </div>
+          );
+        })()}
+
         {/* ---- Navigation ---- */}
         <nav className="flex-1 space-y-0.5 px-3 pt-4">
           {links.map((link) => (
@@ -197,14 +331,36 @@ export default function Sidebar() {
         {/* ---- Bottom Section ---- */}
         <div className="space-y-2 px-3 pb-5 pt-2">
           {user?.role === "admin" && (
-            <Link
-              href="/admin/codes"
-              onClick={() => setOpen(false)}
-              className="flex w-full items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-[12px] font-medium text-amber-700 transition hover:bg-amber-100"
-            >
-              <span>🔑</span>
-              {isEn ? "Admin: Codes" : "أدمن: الكودات"}
-            </Link>
+            <>
+              <Link
+                href="/admin/codes"
+                onClick={() => setOpen(false)}
+                className="flex w-full items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-[12px] font-medium text-amber-700 transition hover:bg-amber-100"
+              >
+                <span>🔑</span>
+                {isEn ? "Admin: Codes" : "أدمن: الكودات"}
+              </Link>
+              <Link
+                href="/admin/payments"
+                onClick={() => setOpen(false)}
+                className="flex w-full items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-[12px] font-medium text-emerald-700 transition hover:bg-emerald-100"
+              >
+                <span>💳</span>
+                {isEn ? "Admin: Payments" : "أدمن: المدفوعات"}
+                {pendingPayments > 0 && (
+                  <span
+                    className="ms-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1.5 text-[10px] font-bold text-white"
+                    title={
+                      isEn
+                        ? "Payment requests waiting for your approval"
+                        : "طلبات دفع بتستنى مراجعتك"
+                    }
+                  >
+                    {pendingPayments}
+                  </span>
+                )}
+              </Link>
+            </>
           )}
 
           <button
@@ -226,8 +382,8 @@ export default function Sidebar() {
             <p className="text-[10px] font-medium text-muted">
               {isEn ? "Supported Formats" : "صيغ مدعومة"}
             </p>
-            <p className="mt-1 text-[10px] text-muted">
-              PDF · Word · PPTX · TXT · {isEn ? "Image" : "صورة"} · {isEn ? "Video" : "فيديو"} · {isEn ? "Audio" : "صوت"}
+            <p className="mt-1 text-[10px] leading-relaxed text-muted">
+              PDF · Word · PPT · Excel · CSV · TXT · MD · HTML · RTF · EPUB · {isEn ? "Images" : "صور"} · {isEn ? "Audio" : "صوت"} · {isEn ? "Video" : "فيديو"}
             </p>
           </div>
 

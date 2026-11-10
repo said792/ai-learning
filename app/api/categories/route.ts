@@ -95,7 +95,7 @@ async function getUserId(request: Request): Promise<{ userId: string | null; gue
    Preset Colors
 ========================================================= */
 
-export const PRESET_COLORS = [
+const PRESET_COLORS = [
   { name: "أزرق", nameEn: "Blue", value: "#3B82F6" },
   { name: "أخضر", nameEn: "Green", value: "#10B981" },
   { name: "أحمر", nameEn: "Red", value: "#EF4444" },

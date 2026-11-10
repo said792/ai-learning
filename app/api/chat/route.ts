@@ -1,13 +1,28 @@
 import { NextResponse } from "next/server";
-import { GoogleGenAI } from "@google/genai";
+import { cookies } from "next/headers";
+import {
+  AllKeysExhaustedError,
+  friendlyGeminiError,
+  generateText,
+  type GeminiTier,
+} from "@/lib/ai/gemini";
+import {
+  getCurrentUserId,
+  readGuestIdFromRequest,
+  ensureGuestId,
+  checkQuota,
+  recordUsage,
+} from "@/lib/usage";
 
-const GEMINI_MODEL = "gemini-3.1-flash-lite";
+export const runtime = "nodejs";
 
-const MAX_API_KEYS = 50;
+/* =========================================================
+   شات الأسئلة — مؤمَّن بالهوية (جلسة أو زائر) + كوتة يومية
+   (كان مفتوحًا بالكامل سابقًا ويسمح بحرق مفاتيح Gemini)
+========================================================= */
+
 const MAX_CONTEXT_CHARS = 120_000;
 const MAX_QUESTION_CHARS = 20_000;
-const MAX_RETRIES_PER_KEY = 2;
-const RETRY_BASE_DELAY_MS = 1_500;
 
 /* =========================================================
    Types
@@ -125,234 +140,8 @@ function buildContextFromAnalysis(analysis: unknown): string {
 }
 
 /* =========================================================
-   Gemini Multi-Key
-========================================================= */
-
-function getGeminiApiKeys(): string[] {
-  const keys: string[] = [];
-
-  for (let index = 1; index <= MAX_API_KEYS; index++) {
-    const key = process.env[`GEMINI_API_KEY_${index}`]?.trim();
-
-    if (key && !keys.includes(key)) {
-      keys.push(key);
-    }
-  }
-
-  const legacyKey = process.env.GEMINI_API_KEY?.trim();
-
-  if (legacyKey && !keys.includes(legacyKey) && keys.length < MAX_API_KEYS) {
-    keys.push(legacyKey);
-  }
-
-  return keys;
-}
-
-function createGeminiClient(apiKey: string): GoogleGenAI {
-  return new GoogleGenAI({
-    apiKey,
-  });
-}
-
-/* =========================================================
-   POST
-========================================================= */
-
-export async function POST(request: Request) {
-  try {
-    const body = (await request.json()) as ChatRequest;
-
-    const lang = body.lang === "en" ? "en" : "ar";
-
-    const question = normalizeText(body.question);
-
-    if (!question) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: lang === "en" ? "Question is required." : "السؤال مطلوب",
-        },
-        { status: 400 }
-      );
-    }
-
-    if (question.length > MAX_QUESTION_CHARS) {
-      return NextResponse.json(
-        {
-          success: false,
-          error:
-            lang === "en"
-              ? `Question is too long. Maximum ${MAX_QUESTION_CHARS} characters.`
-              : `السؤال طويل جدًا. الحد الأقصى ${MAX_QUESTION_CHARS} حرف.`,
-        },
-        { status: 400 }
-      );
-    }
-
-    let documentText = normalizeText(body.documentText || "");
-    let analysisText = normalizeText(body.analysisText || "");
-    
-    if (!documentText && body.analysis) {
-      analysisText = buildContextFromAnalysis(body.analysis);
-    }
-
-    if (!analysisText && body.analysis) {
-      analysisText = buildContextFromAnalysis(body.analysis);
-    }
-
-    if (!documentText && !analysisText) {
-      return NextResponse.json(
-        {
-          success: false,
-          error:
-            lang === "en"
-              ? "No document text or analysis available to answer the question."
-              : "لا يوجد نص مستخرج أو تحليل متاح للإجابة على السؤال.",
-        },
-        { status: 400 }
-      );
-    }
-
-    const apiKeys = getGeminiApiKeys();
-
-    if (apiKeys.length === 0) {
-      return NextResponse.json(
-        {
-          success: false,
-          error:
-            lang === "en"
-              ? "No Gemini keys found. Add GEMINI_API_KEY_1 in .env.local"
-              : "لم يتم العثور على مفاتيح Gemini. أضف GEMINI_API_KEY_1 في .env.local",
-        },
-        { status: 500 }
-      );
-    }
-
-    let finalContext = "";
-    
-    if (documentText) {
-      finalContext = limitText(documentText, MAX_CONTEXT_CHARS, lang);
-    } else {
-      finalContext = limitText(analysisText, MAX_CONTEXT_CHARS, lang);
-    }
-
-    const prompt = buildChatPrompt(
-      question,
-      finalContext,
-      documentText ? body.analysis : null,
-      !documentText,
-      lang
-    );
-
-    let lastError: unknown = null;
-
-    for (let keyIndex = 0; keyIndex < apiKeys.length; keyIndex++) {
-      const apiKey = apiKeys[keyIndex];
-      const keyNumber = keyIndex + 1;
-
-      const ai = createGeminiClient(apiKey);
-
-      console.log(
-        `[AI Chat] استخدام المفتاح ${keyNumber}/${apiKeys.length}`
-      );
-
-      for (let attempt = 1; attempt <= MAX_RETRIES_PER_KEY; attempt++) {
-        try {
-          const answer = await generateAnswer(ai, prompt);
-
-          console.log(
-            `[AI Chat] نجحت الإجابة باستخدام المفتاح ${keyNumber}`
-          );
-
-          return NextResponse.json({
-            success: true,
-            answer,
-          } satisfies ChatResponse);
-        } catch (error) {
-          lastError = error;
-
-          const errorMessage = getErrorMessage(error);
-
-          console.error(
-            `[AI Chat] فشل المفتاح ${keyNumber} - المحاولة ${attempt}/${MAX_RETRIES_PER_KEY}:`,
-            errorMessage
-          );
-
-          if (isQuotaOrRateLimitError(error)) {
-            console.warn(
-              `[AI Chat] المفتاح ${keyNumber} تجاوز الحصة أو معدل الطلبات. الانتقال للمفتاح التالي.`
-            );
-            break;
-          }
-
-          if (isAuthenticationError(error)) {
-            console.warn(
-              `[AI Chat] المفتاح ${keyNumber} غير صالح. الانتقال للمفتاح التالي.`
-            );
-            break;
-          }
-
-          if (attempt < MAX_RETRIES_PER_KEY) {
-            const delay = RETRY_BASE_DELAY_MS * attempt;
-
-            await sleep(delay);
-          }
-        }
-      }
-    }
-
-    return NextResponse.json(
-      {
-        success: false,
-        error:
-          lang === "en"
-            ? `Failed to get an answer from all Gemini keys (${apiKeys.length}). ${getErrorMessage(lastError)}`
-            : `فشل الحصول على إجابة من جميع مفاتيح Gemini (${apiKeys.length}). ${getErrorMessage(lastError)}`,
-      },
-      { status: 503 }
-    );
-  } catch (error) {
-    console.error("[AI Chat] Unexpected error:", error);
-
-    return NextResponse.json(
-      {
-        success: false,
-        error: "حدث خطأ أثناء معالجة السؤال.",
-      },
-      { status: 500 }
-    );
-  }
-}
-
-/* =========================================================
-   Gemini Request
-======================================================== */
-
-async function generateAnswer(
-  ai: GoogleGenAI,
-  prompt: string
-): Promise<string> {
-  const response = await ai.models.generateContent({
-    model: GEMINI_MODEL,
-    contents: prompt,
-    config: {
-      temperature: 0.2,
-      maxOutputTokens: 2048,
-    },
-  });
-
-  const answer = response.text?.trim();
-
-  if (!answer) {
-    throw new Error("Gemini أعاد إجابة فارغة.");
-  }
-
-  return answer;
-}
-
-/* =========================================================
    Prompt
-======================================================== */
+========================================================= */
 
 function buildChatPrompt(
   question: string,
@@ -373,15 +162,10 @@ function buildChatPrompt(
       ? "The requested information is not found in the document."
       : "المعلومة المطلوبة غير موجودة في المستند.";
 
-  const noAnalysisMsg =
-    lang === "en"
-      ? "No previous analysis available."
-      : "لا يوجد تحليل سابق.";
-
   const analysisModeNote = isAnalysisOnly
     ? lang === "en"
       ? `
-⚠️ IMPORTANT: The original document text is not available. You are provided with the ANALYSIS of the document instead. 
+⚠️ IMPORTANT: The original document text is not available. You are provided with the ANALYSIS of the document instead.
 Use this analysis to answer the question as best as you can. The analysis contains extracted topics, rules, procedures, definitions, examples, etc.
 You can elaborate and explain based on the analysis data provided.`
       : `
@@ -523,16 +307,16 @@ Answer Rules
  ${contextText}
 
  ${
-  !isAnalysisOnly && analysisJson
-    ? `
+   !isAnalysisOnly && analysisJson
+     ? `
 ========================
  ${lang === "en" ? "Previous Document Analysis" : "التحليل السابق للمستند"}
 ========================
 
  ${analysisJson}
 `
-    : ""
-}
+     : ""
+ }
 
 ========================
  ${lang === "en" ? "End of Data" : "نهاية البيانات"}
@@ -583,58 +367,157 @@ function safeJsonStringify(value: unknown): string {
 }
 
 /* =========================================================
-   Error Helpers
+   POST
 ========================================================= */
 
-function getErrorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-
-  if (typeof error === "string") {
-    return error;
-  }
-
+export async function POST(request: Request) {
   try {
-    return JSON.stringify(error);
-  } catch {
-    return String(error);
+    const body = (await request.json()) as ChatRequest;
+
+    const lang = body.lang === "en" ? "en" : "ar";
+
+    const question = normalizeText(body.question);
+
+    if (!question) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: lang === "en" ? "Question is required." : "السؤال مطلوب",
+        },
+        { status: 400 }
+      );
+    }
+
+    if (question.length > MAX_QUESTION_CHARS) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            lang === "en"
+              ? `Question is too long. Maximum ${MAX_QUESTION_CHARS} characters.`
+              : `السؤال طويل جدًا. الحد الأقصى ${MAX_QUESTION_CHARS} حرف.`,
+        },
+        { status: 400 }
+      );
+    }
+
+    /* =====================================================
+       الهوية: جلسة مسجلة أو زائر — مطلوبة دائمًا
+    ===================================================== */
+    const cookieStore = await cookies();
+    let userId = await getCurrentUserId();
+    let guestId = cookieStore.get("ai_guest_id")?.value || null;
+
+    if (!userId && !guestId) {
+      // زائر جديد تمامًا — إنشاء هوية زائر
+      guestId = await ensureGuestId();
+    }
+
+    /* =====================================================
+       الكوتة
+    ===================================================== */
+    const quota = await checkQuota("chat", { userId, guestId });
+
+    if (!quota.allowed) {
+      return NextResponse.json(
+        {
+          success: false,
+          limitReached: true,
+          error:
+            lang === "en"
+              ? `You have reached your daily chat limit (${quota.limit}). Try again tomorrow.`
+              : `لقد وصلت إلى الحد اليومي للمحادثة (${quota.limit} أسئلة). حاول غدًا أو ${
+                  userId ? "قم بترقية باقتك" : "سجل الدخول لمزيد من الأسئلة"
+                }.`,
+          used: quota.used,
+          limit: quota.limit,
+        },
+        { status: 403 }
+      );
+    }
+
+    /* =====================================================
+       السياق
+    ===================================================== */
+    let documentText = normalizeText(body.documentText || "");
+    let analysisText = normalizeText(body.analysisText || "");
+
+    if (!documentText && body.analysis) {
+      analysisText = buildContextFromAnalysis(body.analysis);
+    }
+
+    if (!analysisText && body.analysis) {
+      analysisText = buildContextFromAnalysis(body.analysis);
+    }
+
+    if (!documentText && !analysisText) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            lang === "en"
+              ? "No document text or analysis available to answer the question."
+              : "لا يوجد نص مستخرج أو تحليل متاح للإجابة على السؤال.",
+        },
+        { status: 400 }
+      );
+    }
+
+    const finalContext = documentText
+      ? limitText(documentText, MAX_CONTEXT_CHARS, lang)
+      : limitText(analysisText, MAX_CONTEXT_CHARS, lang);
+
+    const prompt = buildChatPrompt(
+      question,
+      finalContext,
+      documentText ? body.analysis : null,
+      !documentText,
+      lang
+    );
+
+    /* =====================================================
+       الإجابة (تدوير المفاتيح المركزي)
+       برج المفاتيح حسب الخطة: المدفوع → مفاتيح الفاتورة + ملجأ مجاني
+    ===================================================== */
+    const tier: GeminiTier =
+      quota.price && Number(quota.price) > 0 ? "paid" : "free";
+
+    const answer = await generateText(prompt, {
+      temperature: 0.2,
+      maxOutputTokens: 2048,
+      tier,
+    });
+
+    // تسجيل الاستخدام بعد النجاح
+    await recordUsage("chat", { userId, guestId });
+
+    return NextResponse.json({
+      success: true,
+      answer,
+      remaining: quota.remaining !== null ? Math.max(quota.remaining - 1, 0) : null,
+    } satisfies ChatResponse & { remaining: number | null });
+  } catch (error) {
+    console.error("[AI Chat] Unexpected error:", error);
+
+    const message = error instanceof Error ? error.message : "";
+
+    if (error instanceof AllKeysExhaustedError) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: friendlyGeminiError(error.kind),
+          detail: message,
+        },
+        { status: 503 }
+      );
+    }
+
+    return NextResponse.json(
+      {
+        success: false,
+        error: "حدث خطأ أثناء معالجة السؤال.",
+      },
+      { status: 500 }
+    );
   }
-}
-
-function isQuotaOrRateLimitError(error: unknown): boolean {
-  const message = getErrorMessage(error).toLowerCase();
-
-  return (
-    message.includes("429") ||
-    message.includes("resource_exhausted") ||
-    message.includes("resource exhausted") ||
-    message.includes("quota") ||
-    message.includes("rate limit") ||
-    message.includes("ratelimit") ||
-    message.includes("too many requests") ||
-    message.includes("limit exceeded")
-  );
-}
-
-function isAuthenticationError(error: unknown): boolean {
-  const message = getErrorMessage(error).toLowerCase();
-
-  return (
-    message.includes("401") ||
-    message.includes("403") ||
-    message.includes("unauthorized") ||
-    message.includes("permission denied") ||
-    message.includes("api key not valid") ||
-    message.includes("invalid api key") ||
-    message.includes("api_key_invalid")
-  );
-}
-
-/* =========================================================
-   Delay
-======================================================== */
-
-function sleep(milliseconds: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }

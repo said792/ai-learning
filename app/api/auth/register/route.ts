@@ -1,8 +1,21 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { hashPassword } from "@/lib/auth";
+import {
+  createSessionToken,
+  hashPassword,
+  hashSessionToken,
+} from "@/lib/auth";
+import { ensureFreePlan } from "@/lib/subscription";
 
 export const runtime = "nodejs";
+
+/* =========================================================
+   عزل البيانات — قرار التصميم:
+   كل حساب يبدأ فاضي تمامًا. ملفات الزائر (قبل التسجيل) لا تُنقل
+   للحساب — لأن كده كان الحساب الجديد بيورّث ملفات الجلسة السابقة
+   على نفس الجهاز/المتصفح. كل مستخدم ليه ملفاته فقط.
+   (كوكي الزائر يتمسح بعد التسجيل/الدخول — انظر نهاية الملف)
+========================================================= */
 
 export async function POST(req: Request) {
   try {
@@ -134,38 +147,104 @@ export async function POST(req: Request) {
     }
 
     // ============================================
-    // تفعيل الخطة المجانية تلقائياً
+    // تفعيل الخطة المجانية تلقائياً — مدى الحياة بدون أي كود
+    // (لو الخطة المجانية مش موجودة في قاعدة البيانات نعملها أولًا)
     // ============================================
     try {
-      const { data: freePlan } = await supabaseAdmin
-        .from("plans")
-        .select("id, duration_days")
-        .eq("price", 0)
-        .limit(1)
-        .maybeSingle();
+      const freePlan = await ensureFreePlan();
 
-      if (freePlan) {
-        const startDate = new Date().toISOString();
-        const endDate = new Date();
-        endDate.setDate(endDate.getDate() + (freePlan.duration_days || 30));
+      const startDate = new Date().toISOString();
+      const endDate = new Date();
+      endDate.setDate(
+        endDate.getDate() + Math.max(Number(freePlan.duration_days) || 36500, 30)
+      );
 
-        await supabaseAdmin.from("subscriptions").insert({
-          user_id: user.id,
-          plan_id: freePlan.id,
-          start_date: startDate,
-          end_date: endDate.toISOString(),
-          status: "active",
-        });
-      }
+      await supabaseAdmin.from("subscriptions").insert({
+        user_id: user.id,
+        plan_id: freePlan.id,
+        start_date: startDate,
+        end_date: endDate.toISOString(),
+        status: "active",
+      });
     } catch (subError) {
       // لو فشل تفعيل الخطة ما نوقفش التسجيل
       console.error("Failed to activate free plan:", subError);
     }
 
-    return NextResponse.json({
+    // ============================================
+    // (تم إلغاء نقل بيانات الزائر للحساب — عزل كامل لكل مستخدم)
+    // ============================================
+
+    // ============================================
+    // تسجيل دخول تلقائي — جلسة جديدة للحساب الجديد
+    // (بدلها المستخدم يفضل داخل بجلسة حساب قديم
+    //  ويلقى بيانات مش بتاعته)
+    // ============================================
+    const token = createSessionToken();
+    const tokenHash = hashSessionToken(token);
+
+    const expiresAt = new Date(
+      Date.now() + 7 * 24 * 60 * 60 * 1000
+    ).toISOString();
+
+    const { error: sessionError } = await supabaseAdmin
+      .from("auth_sessions")
+      .insert({
+        user_id: user.id,
+        token_hash: tokenHash,
+        expires_at: expiresAt,
+      });
+
+    if (sessionError) {
+      console.error("[Register] Session error:", sessionError);
+      // مش هنوقف التسجيل — المستخدم يقدر يسجل دخول يدويًا
+    }
+
+    await supabaseAdmin
+      .from("users")
+      .update({ last_login_at: new Date().toISOString() })
+      .eq("id", user.id);
+
+    const response = NextResponse.json({
       success: true,
       user,
+      autoLoggedIn: !sessionError,
     });
+
+    if (!sessionError) {
+      response.cookies.set({
+        name: "ai_learning_session",
+        value: token,
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "lax",
+        path: "/",
+        maxAge: 7 * 24 * 60 * 60,
+      });
+    }
+
+    /* امسح كوكي الزائر بعد الربط (كلا الاسمين للتوافق) */
+    response.cookies.set({
+      name: "ai_guest_id",
+      value: "",
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      path: "/",
+      maxAge: 0,
+    });
+
+    response.cookies.set({
+      name: "guest_id",
+      value: "",
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      path: "/",
+      maxAge: 0,
+    });
+
+    return response;
   } catch (error) {
     console.error("Register API error:", error);
 

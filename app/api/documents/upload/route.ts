@@ -2,37 +2,30 @@ import { NextResponse } from "next/server";
 import { mkdir, writeFile } from "fs/promises";
 import path from "path";
 import crypto from "crypto";
-import { createClient } from "@supabase/supabase-js";
 
 import { suggestCategory } from "@/lib/ai/category-suggest";
 import { analyzeDocument } from "@/lib/ai/analyzer";
-import { extractPdfText } from "@/lib/files/pdf";
-import { extractWordText } from "@/lib/files/word";
-import { extractPowerPointText } from "@/lib/files/powerpoint";
-import { extractAudioFromVideo } from "@/lib/files/video";
-import { transcribeAudioToText } from "@/lib/files/transcribe";
-import { ocrWithGemini } from "@/lib/files/ocr-gemini";
+import {
+  extractTextFromAnyFile,
+  isVideoExt,
+  isAudioExt,
+  isImageExt,
+} from "@/lib/files/universal";
+import { isSupportedExtension } from "@/lib/files/registry";
+import {
+  processDocumentAssets,
+  getSignedAssetUrls,
+} from "@/lib/files/document-images";
 import { hashSessionToken } from "@/lib/auth";
 
-export const runtime = "nodejs";
-
 /* =========================================================
-   Supabase
+   Supabase (العميل الموحد)
 ========================================================= */
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+import { supabaseAdmin as supabase } from "@/lib/supabaseAdmin";
+import { ensureFreeSubscription, getEffectiveSubscription } from "@/lib/subscription";
 
-if (!supabaseUrl || !supabaseServiceRoleKey) {
-  throw new Error("Supabase environment variables are missing");
-}
-
-const supabase = createClient(supabaseUrl, supabaseServiceRoleKey, {
-  auth: {
-    autoRefreshToken: false,
-    persistSession: false,
-  },
-});
+export const runtime = "nodejs";
 
 /* =========================================================
    Configuration
@@ -220,26 +213,12 @@ async function prepareIdentity(request: Request): Promise<{ identity: RequestIde
 ======================================================== */
 
 async function getActiveSubscription(userId: string): Promise<SubscriptionInfo | null> {
-  const now = new Date().toISOString();
-
-  const { data, error } = await supabase
-    .from("subscriptions")
-    .select(`
-      id, user_id, plan_id, start_date, end_date, status,
-      plan:plans ( id, name, monthly_limit, daily_limit, price, duration_days, is_active, features )
-    `)
-    .eq("user_id", userId)
-    .eq("status", "active")
-    .lte("start_date", now)
-    .gte("end_date", now)
-    .order("end_date", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (error) {
-    console.error("[Subscription] Lookup error:", error);
-    throw new Error("تعذر التحقق من الاشتراك");
-  }
+  /* الاشتراك الفعّال: الباقة المدفوعة السارية أولًا، وإلا الخطة المجانية */
+  const data = await getEffectiveSubscription(
+    userId,
+    `id, user_id, plan_id, start_date, end_date, status,
+     plan:plans ( id, name, monthly_limit, daily_limit, price, duration_days, is_active, features )`
+  );
 
   if (!data) return null;
 
@@ -247,21 +226,21 @@ async function getActiveSubscription(userId: string): Promise<SubscriptionInfo |
   if (!rawPlan) return null;
 
   return {
-    id: data.id,
-    user_id: data.user_id,
-    plan_id: data.plan_id,
-    start_date: data.start_date,
-    end_date: data.end_date,
-    status: data.status,
+    id: String(data.id),
+    user_id: String(data.user_id),
+    plan_id: String(data.plan_id),
+    start_date: String(data.start_date),
+    end_date: String(data.end_date),
+    status: String(data.status),
     plan: {
-      id: rawPlan.id,
-      name: rawPlan.name,
-      monthly_limit: rawPlan.monthly_limit,
-      daily_limit: rawPlan.daily_limit,
-      price: rawPlan.price,
-      duration_days: rawPlan.duration_days,
-      is_active: rawPlan.is_active,
-      features: rawPlan.features,
+      id: String(rawPlan.id),
+      name: String(rawPlan.name ?? ""),
+      monthly_limit: (rawPlan.monthly_limit as number | null) ?? null,
+      daily_limit: (rawPlan.daily_limit as number | null) ?? null,
+      price: Number(rawPlan.price ?? 0),
+      duration_days: Number(rawPlan.duration_days ?? 30),
+      is_active: rawPlan.is_active !== false,
+      features: rawPlan.features ?? null,
     },
   };
 }
@@ -344,21 +323,34 @@ async function checkUsagePermission(identity: RequestIdentity): Promise<{
       userType: "guest",
       usedToday,
       dailyLimit: GUEST_DAILY_LIMIT,
-      reason: allowed ? undefined : "لقد وصلت إلى الحد اليومي للزائر (3 ملفات). سجل الدخول للاستمتاع بمزيد من التحليلات.",
+      reason: allowed ? undefined : "لقد وصلت إلى الحد اليومي للزائر (3 ملفات). سجل حساب مجاني مدى الحياة — بدون تفعيل — عشان ترفع أكتر.",
     };
   }
 
-  const subscription = await getActiveSubscription(identity.userId);
+  let subscription = await getActiveSubscription(identity.userId);
 
   if (!subscription) {
-    return {
-      allowed: false,
-      userType: "subscriber",
-      usedToday: await countDailyUsage(identity.userId, null),
-      dailyLimit: 0,
-      subscription: null,
-      reason: "لا يوجد اشتراك فعال. يرجى الاشتراك أو تجديد الاشتراك للاستمرار في استخدام خدمات التحليل.",
-    };
+    /* شفاء ذاتي: لو مفيش اشتراك ساري (نادر) — نتأكد إن الخطة المجانية مفعّلة له */
+    try {
+      await ensureFreeSubscription(identity.userId);
+      const retry = await getActiveSubscription(identity.userId);
+      if (retry) {
+        subscription = retry;
+      }
+    } catch {
+      /* تجاهل — هنرجع رسالة الاشتراك تحت */
+    }
+
+    if (!subscription) {
+      return {
+        allowed: false,
+        userType: "subscriber",
+        usedToday: await countDailyUsage(identity.userId, null),
+        dailyLimit: 0,
+        subscription: null,
+        reason: "لا يوجد اشتراك فعال. يرجى تحديث الصفحة أو الاشتراك للاستمرار في استخدام خدمات التحليل.",
+      };
+    }
   }
 
   if (subscription.plan.is_active === false) {
@@ -383,7 +375,7 @@ async function checkUsagePermission(identity: RequestIdentity): Promise<{
       usedToday,
       dailyLimit,
       subscription,
-      reason: `لقد وصلت إلى الحد اليومي (${dailyLimit}) لباقة "${subscription.plan.name}". حاول غداً أو قم بترقية باقتك.`,
+      reason: `لقد وصلت إلى أقصى عدد لرفع الملفات اليوم (${usedToday} من ${dailyLimit}) في باقة "${subscription.plan.name}". انتظر حتى الغد، أو اشترك في باقة أعلى من صفحة الاشتراكات.`,
     };
   }
 
@@ -398,7 +390,7 @@ async function checkUsagePermission(identity: RequestIdentity): Promise<{
       usedThisMonth,
       monthlyLimit,
       subscription,
-      reason: `لقد وصلت إلى الحد الشهري (${monthlyLimit}) لباقة "${subscription.plan.name}". قم بتجديد الاشتراك أو ترقية الباقة.`,
+      reason: `لقد وصلت إلى أقصى عدد لرفع الملفات هذا الشهر (${usedThisMonth} من ${monthlyLimit}) في باقة "${subscription.plan.name}". اشترك في باقة أعلى لمزيد من الملفات.`,
     };
   }
 
@@ -455,18 +447,9 @@ function responseWithGuestCookie(
   return response;
 }
 
-/* =========================================================
-   Image MIME Type Helper
-========================================================= */
-
-const IMAGE_MIME_MAP: Record<string, string> = {
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".png": "image/png",
-  ".webp": "image/webp",
-  ".bmp": "image/bmp",
-  ".tiff": "image/tiff",
-};
+/* =====================================================
+   (مخططات MIME للصور انتقلت إلى lib/files/registry.ts)
+===================================================== */
 
 /* =========================================================
    POST
@@ -514,18 +497,11 @@ export async function POST(request: Request) {
     const lowerFileName = originalFileName.toLowerCase();
     const extension = path.extname(lowerFileName);
 
-    const supportedExtensions = [
-      ".pdf", ".docx", ".pptx", ".txt",
-      ".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff",
-      ".mp4", ".webm", ".mov", ".avi", ".wmv", ".mkv",
-      ".mp3", ".wav", ".m4a", ".ogg", ".flac", ".aac", ".wma",
-    ];
-
-    if (!supportedExtensions.includes(extension)) {
+    if (!extension || !isSupportedExtension(extension)) {
       return responseWithGuestCookie(
         {
           success: false,
-          error: "نوع الملف غير مدعوم حاليًا",
+          error: "نوع الملف غير مدعوم حاليًا — تحقق من قائمة الصيغ المدعومة في القائمة الجانبية",
           fileName: originalFileName,
           fileType: file.type,
         },
@@ -757,18 +733,14 @@ export async function POST(request: Request) {
     await writeFile(filePath, buffer);
 
     /* =====================================================
-       Media Type Detection
+       Media Type Detection (موحد عبر registry)
     ===================================================== */
-    const videoExtensions = [".mp4", ".webm", ".mov", ".avi", ".mkv", ".wmv"];
-    const audioExtensions = [".mp3", ".wav", ".m4a", ".ogg", ".flac", ".aac", ".wma"];
-    const imageExtensions = [".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff"];
-
-    const isVideo = videoExtensions.includes(extension);
-    const isAudio = audioExtensions.includes(extension);
-    const isImage = imageExtensions.includes(extension);
+    const isVideo = isVideoExt(extension);
+    const isAudio = isAudioExt(extension);
+    const isImage = isImageExt(extension);
     const isMedia = isVideo || isAudio;
 
-    let mediaType = isImage ? "document" : isMedia ? "media" : "document";
+    const mediaType = isMedia ? "media" : "document";
 
     /* =====================================================
        Supabase Storage
@@ -788,70 +760,35 @@ export async function POST(request: Request) {
     }
 
     /* =====================================================
-       Media (Video/Audio) → Transcription via Gemini
+       استخراج النص عبر المُوجّه الموحد (كل الصيغ)
     ===================================================== */
     let text = "";
+    let emptyReason: string | undefined;
 
-    if (isMedia) {
-      let audioFilePath = filePath;
+    {
+      const result = await extractTextFromAnyFile({
+        filePath,
+        originalName: originalFileName,
+        extension,
+        fileBuffer: buffer,
+        fileMime: file.type || undefined,
+        lang,
+        isVideo,
+        isAudio,
+        isImage,
+      });
 
-      if (isVideo) {
-        console.log(`[Documents] استخراج الصوت من الفيديو: ${originalFileName}`);
-        audioFilePath = path.join(uploadDir, `${fileHash}.wav`);
-        await extractAudioFromVideo(filePath, audioFilePath);
-      }
-
-      console.log(`[Documents] بدء نسخ الصوت إلى نص باستخدام الذكاء الاصطناعي: ${originalFileName}`);
-      text = await transcribeAudioToText(audioFilePath, lang);
-
-      if (!text.trim()) {
-        return responseWithGuestCookie(
-          {
-            success: false,
-            error: "لم يتم استخراج أي نص من الملف الصوتي أو الفيديو. تأكد من أن الملف يحتوي على كلام واضح.",
-            fileName: originalFileName,
-          },
-          422,
-          identity,
-          isNewGuest
-        );
-      }
-    }
-
-    /* =====================================================
-       Extract Text (Documents + Images)
-    ===================================================== */
-    if (!isMedia) {
-      if (extension === ".pdf") {
-        text = await extractPdfText(filePath);
-
-        if (!text.trim()) {
-          console.log(
-            `[Documents] PDF ممسوح بدون طبقة نص، جاري استخراج النص بالذكاء الاصطناعي: ${originalFileName}`
-          );
-          text = await ocrWithGemini(buffer, "application/pdf", lang);
-        }
-      } else if (extension === ".docx") {
-        text = await extractWordText(filePath);
-      } else if (extension === ".pptx") {
-        text = await extractPowerPointText(filePath);
-      } else if (extension === ".txt") {
-        text = buffer.toString("utf-8");
-      } else if (isImage) {
-        const imageMime = IMAGE_MIME_MAP[extension] || file.type || "image/jpeg";
-
-        console.log(
-          `[Documents] استخراج النص من الصورة بالذكاء الاصطناعي: ${originalFileName}`
-        );
-        text = await ocrWithGemini(buffer, imageMime, lang);
-      }
+      text = result.text;
+      emptyReason = result.emptyReason;
     }
 
     if (!text.trim()) {
       return responseWithGuestCookie(
         {
           success: false,
-          error: "لم يتم استخراج أي نص من الملف حتى بعد محاولة قراءته بالذكاء الاصطناعي. تأكد من أن الملف يحتوي على نص واضح قابل للقراءة.",
+          error:
+            emptyReason ||
+            "لم يتم استخراج أي نص من الملف حتى بعد محاولة قراءته بالذكاء الاصطناعي. تأكد من أن الملف يحتوي على نص واضح قابل للقراءة.",
           fileName: originalFileName,
         },
         422,
@@ -953,6 +890,49 @@ export async function POST(request: Request) {
     }
 
     /* =====================================================
+       صور المستند: استخراج + تحليل + رفع (غير حرج)
+    ===================================================== */
+    let assets: Array<{
+      id: string;
+      url: string | null;
+      pageNumber: number | null;
+      source: string;
+      analysis: {
+        description: string;
+        textInImage?: string;
+        educationalNote?: string;
+      } | null;
+    }> = [];
+
+    try {
+      const storedAssets = await processDocumentAssets({
+        documentId: documentId as string,
+        filePath,
+        extension,
+        documentTitle: analysis?.title || originalFileName,
+        userId: identity.userId ?? null,
+        guestId: identity.guestId ?? null,
+        lang,
+      });
+
+      if (storedAssets.length > 0) {
+        const signedUrls = await getSignedAssetUrls(
+          storedAssets.map((a) => a.storage_path)
+        );
+
+        assets = storedAssets.map((a) => ({
+          id: a.id,
+          url: signedUrls[a.storage_path] || null,
+          pageNumber: a.page_number,
+          source: a.source,
+          analysis: a.analysis,
+        }));
+      }
+    } catch (assetsError) {
+      console.error("[Documents] خطأ في خط الصور (غير حرج):", assetsError);
+    }
+
+    /* =====================================================
        Final Usage
     ===================================================== */
     const finalUsage = await checkUsagePermission(identity);
@@ -971,6 +951,7 @@ export async function POST(request: Request) {
         text: text.substring(0, 1000),
         analysis,
         categorySuggestion,
+        assets,
         usage: {
           userType: finalUsage.userType,
           usedToday: finalUsage.usedToday,

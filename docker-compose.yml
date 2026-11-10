@@ -1,0 +1,28 @@
+# ============================================================
+#  AI Learning — تشغيل كامل بأمر واحد
+#  1) ضع مفاتيحك في .env.local
+#  2) شغّل: docker compose up -d
+#  3) افتح: http://localhost:3000
+# ============================================================
+
+services:
+  app:
+    build: .
+    container_name: ai-learning
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env.local
+    volumes:
+      # حفظ الملفات المرفوعة مؤقتًا على الخادم
+      - uploads:/app/uploads
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/login"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  uploads:

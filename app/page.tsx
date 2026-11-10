@@ -14,6 +14,8 @@ import CategoryManager from "./components/CategoryManager";
 
 import CategorySelector from "./components/CategorySelector";
 
+import LessonModal from "./components/LessonModal";
+
 
 
 interface Analysis {
@@ -79,6 +81,30 @@ interface UploadResult {
   analysis?: Analysis;
 
   categorySuggestion?: { suggestedName: string | null; confidence: string };
+
+  assets?: DocumentAsset[];
+
+}
+
+interface DocumentAsset {
+
+  id: string;
+
+  url: string | null;
+
+  pageNumber: number | null;
+
+  source: string;
+
+  analysis: {
+
+    description: string;
+
+    textInImage?: string;
+
+    educationalNote?: string;
+
+  } | null;
 
 }
 
@@ -194,7 +220,157 @@ export default function Home() {
 
 
 
+  const [lessonModalOpen, setLessonModalOpen] = useState(false);
+
+  const [uploadedAssets, setUploadedAssets] = useState<DocumentAsset[]>([]);
+
+  const [assetsFetchedFor, setAssetsFetchedFor] = useState<string | null>(null);
+
+
+
   const analysis = result?.analysis;
+
+  /* جلب صور المستند للملفات الموجودة مسبقًا */
+
+  useEffect(() => {
+
+    const docId = result?.documentId;
+
+    if (!docId || uploadedAssets.length > 0 || assetsFetchedFor !== docId) return;
+
+    let cancelled = false;
+
+    (async () => {
+
+      try {
+
+        const res = await fetch(`/api/documents/${docId}/assets`, { credentials: "include" });
+
+        const data = await res.json();
+
+        if (!cancelled && res.ok && data.assets) {
+
+          setUploadedAssets(data.assets);
+
+        }
+
+      } catch {
+
+        /* تجاهل */
+
+      }
+
+    })();
+
+    return () => { cancelled = true; };
+
+  }, [result?.documentId, assetsFetchedFor, uploadedAssets.length]);
+
+
+
+  /* فتح مستند موجود من المكتبة (زرار «افتح 🚀») بدون رفعه تاني */
+
+  useEffect(() => {
+
+    const raw = typeof window !== "undefined" ? sessionStorage.getItem("ai_open_document") : null;
+
+    if (!raw) return;
+
+    sessionStorage.removeItem("ai_open_document");
+
+    let docId = "";
+
+    try {
+
+      const parsed = JSON.parse(raw);
+
+      if (parsed && typeof parsed.id === "string") docId = parsed.id;
+
+    } catch {
+
+      return;
+
+    }
+
+    if (!docId) return;
+
+    let cancelled = false;
+
+    (async () => {
+
+      try {
+
+        const res = await fetch(`/api/documents/${docId}`, { credentials: "include" });
+
+        const data = await res.json().catch(() => null);
+
+        if (cancelled) return;
+
+        if (!res.ok || !data?.document) {
+
+          setMessage(isEn ? "Could not open the document" : "تعذر فتح المستند");
+
+          setMessageType("error");
+
+          return;
+
+        }
+
+        const doc = data.document;
+
+        setResult({
+
+          success: true,
+
+          fileName: doc.file_name,
+
+          documentId: doc.id,
+
+          mediaType: doc.media_type || undefined,
+
+          textLength: doc.extracted_text?.length ?? 0,
+
+          text: (doc.extracted_text || "").substring(0, 1000),
+
+          analysis: doc.analysis || undefined,
+
+        });
+
+        setUploadedAssets([]);
+
+        setAssetsFetchedFor(null);
+
+        setStarted(true);
+
+        sessionStorage.setItem("nexora_started", "true");
+
+        setMessage(isEn
+
+          ? "Document opened — create an audio/video lesson, quiz, or chat without re-uploading."
+
+          : "تم فتح المستند — تقدر دلوقتي تولّد درس صوتي أو فيديو أو تعمل اختبار أو تتكلم مع الملف من غير ما ترفعه تاني.");
+
+        setMessageType("success");
+
+      } catch {
+
+        if (!cancelled) {
+
+          setMessage(isEn ? "Could not open the document" : "تعذر فتح المستند");
+
+          setMessageType("error");
+
+        }
+
+      }
+
+    })();
+
+    return () => { cancelled = true; };
+
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+
+  }, []);
 
 
 
@@ -235,6 +411,12 @@ export default function Home() {
     setExplanation("");
 
     setCategorySuggestion(null);
+
+    setUploadedAssets([]);
+
+    setAssetsFetchedFor(null);
+
+    setLessonModalOpen(false);
 
 
 
@@ -278,6 +460,8 @@ export default function Home() {
 
             });
 
+            setAssetsFetchedFor(doc.id);
+
             setMessage(isEn ? "This file already exists. Previous analysis loaded." : "هذا الملف موجود بالفعل. تم تحميل التحليل السابق.");
 
             setMessageType("info");
@@ -313,6 +497,8 @@ export default function Home() {
       }
 
       setResult(data);
+
+      setUploadedAssets(data.assets || []);
 
       if (data.categorySuggestion) setCategorySuggestion(data.categorySuggestion);
 
@@ -564,7 +750,7 @@ export default function Home() {
 
       if (data.success && result?.documentId) {
 
-        await fetch(`/api/documents/${result.documentId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ categoryId: data.category.id }) });
+        await fetch(`/api/documents/${result.documentId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ category_id: data.category.id }) });
 
       }
 
@@ -767,7 +953,7 @@ export default function Home() {
 
           <label htmlFor="f" className="flex cursor-pointer flex-col items-center rounded-lg border border-dashed border-slate-200 bg-slate-50/50 p-8 transition hover:border-slate-300 hover:bg-slate-50">
 
-            <input id="f" type="file" accept=".pdf,.doc,.docx,.ppt,.pptx,.txt,.jpg,.jpeg,.png,.webp,.bmp,.tiff,.mp4,.webm,.mov,.avi,.wmv,.mkv,.mp3,.wav,.m4a,.ogg,.flac,.aac,.wma" onChange={(e) => { setFile(e.target.files?.[0] || null); setMessage(""); setResult(null); setActiveTool(null); setExplanation(""); setCategorySuggestion(null); }} className="hidden" />
+            <input id="f" type="file" accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.ods,.csv,.txt,.md,.html,.htm,.rtf,.odt,.odp,.epub,.wps,.jpg,.jpeg,.png,.webp,.bmp,.tiff,.tif,.gif,.heic,.heif,.svg,.mp4,.webm,.mov,.avi,.wmv,.mkv,.m4v,.3gp,.flv,.mpg,.mpeg,.ts,.mp3,.wav,.m4a,.ogg,.oga,.opus,.flac,.aac,.wma,.aiff,.aif,.weba,.m4b" onChange={(e) => { setFile(e.target.files?.[0] || null); setMessage(""); setResult(null); setActiveTool(null); setExplanation(""); setCategorySuggestion(null); setUploadedAssets([]); setAssetsFetchedFor(null); }} className="hidden" />
 
             <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-white text-xl shadow-sm ring-1 ring-slate-100">📄</div>
 
@@ -849,9 +1035,93 @@ export default function Home() {
 
               <ToolButton icon="📊" label={isEn ? "Full Analysis" : "تحليل كامل"} onClick={() => setActiveTool(activeTool === "full" ? null : "full")} active={activeTool === "full"} />
 
+              <ToolButton icon="🎧" label={isEn ? "Audio Lesson" : "درس صوتي"} onClick={() => setLessonModalOpen(true)} active={false} />
+
+              <ToolButton icon="🎬" label={isEn ? "Video Lesson" : "درس فيديو"} onClick={() => setLessonModalOpen(true)} active={false} />
+
             </div>
 
           </div>
+
+          {/* ====== صور المستند المستخرجة + شرحها ====== */}
+
+          {uploadedAssets.length > 0 && (
+
+            <div className="animate-fadeIn space-y-3 rounded-xl border border-slate-200 bg-white p-5">
+
+              <div className="flex items-center justify-between">
+
+                <h3 className="text-sm font-bold text-slate-800">🖼️ {isEn ? "Extracted Images & Explanations" : "الصور المستخرجة وشرحها"}</h3>
+
+                <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] font-medium text-slate-500">{uploadedAssets.length}</span>
+
+              </div>
+
+              <div className="grid gap-4 sm:grid-cols-2">
+
+                {uploadedAssets.map((asset) => (
+
+                  <div key={asset.id} className="overflow-hidden rounded-xl border border-slate-200">
+
+                    {asset.url ? (
+
+                      // eslint-disable-next-line @next/next/no-img-element
+
+                      <img src={asset.url} alt={asset.analysis?.description || "صورة من المستند"} className="max-h-64 w-full bg-slate-50 object-contain" loading="lazy" />
+
+                    ) : (
+
+                      <div className="flex h-40 items-center justify-center bg-slate-50 text-slate-300">🖼️</div>
+
+                    )}
+
+                    <div className="space-y-1.5 p-3">
+
+                      <div className="flex flex-wrap items-center gap-1.5">
+
+                        {asset.pageNumber != null && (
+
+                          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-500">{isEn ? `Page ${asset.pageNumber}` : `صفحة ${asset.pageNumber}`}</span>
+
+                        )}
+
+                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-500">
+
+                          {asset.source === "page_render" ? (isEn ? "Page render" : "تصوير صفحة") : asset.source === "embedded" ? (isEn ? "Embedded image" : "صورة مدمجة") : (isEn ? "Original" : "الصورة الأصلية")}
+
+                        </span>
+
+                      </div>
+
+                      {asset.analysis?.description && (
+
+                        <p className="text-[11px] leading-5 text-slate-600">{asset.analysis.description}</p>
+
+                      )}
+
+                      {asset.analysis?.educationalNote && (
+
+                        <p className="rounded-lg bg-amber-50 px-2.5 py-1.5 text-[11px] leading-5 text-amber-800">💡 {asset.analysis.educationalNote}</p>
+
+                      )}
+
+                      {asset.analysis?.textInImage && (
+
+                        <p className="text-[10px] leading-4 text-slate-400">🔎 {asset.analysis.textInImage}</p>
+
+                      )}
+
+                    </div>
+
+                  </div>
+
+                ))}
+
+              </div>
+
+            </div>
+
+          )}
 
 
 
@@ -1070,6 +1340,24 @@ export default function Home() {
 
 
       <style jsx global>{`@keyframes fadeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}.animate-fadeIn{animation:fadeIn .3s ease-out forwards}`}</style>
+
+      {/* ====== نافذة إنشاء الدروس الصوتية/المرئية ====== */}
+
+      {lessonModalOpen && result?.documentId && (
+
+        <LessonModal
+
+          documentId={result.documentId}
+
+          documentTitle={result.fileName}
+
+          isEn={isEn}
+
+          onClose={() => setLessonModalOpen(false)}
+
+        />
+
+      )}
 
     </div>
 

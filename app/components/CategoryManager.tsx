@@ -138,20 +138,40 @@ export default function CategoryManager({
     }
   }
 
-  /* نقل ملف لكتالوج */
+  /* نقل ملف لكتالوج — مع رسالة نجاح/خطأ بدل الصمت التام */
   async function moveDocument(docId: string, categoryId: string | null) {
+    const targetName = categoryId
+      ? (categories.find((c) => c.id === categoryId)?.name || "")
+      : (isEn ? "Uncategorized" : "بدون تصنيف");
+
     try {
-      await fetch(`/api/documents/${docId}`, {
+      const res = await fetch(`/api/documents/${docId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ categoryId }),
       });
-      if (activeCategoryId) {
+
+      const data = await res.json().catch(() => null);
+
+      if (!res.ok || !data || data.success === false) {
+        alert(data?.error || (isEn ? "Failed to move the file" : "فشل نقل الملف"));
+        return;
+      }
+
+      alert(
+        isEn
+          ? `Moved to "${targetName}" successfully`
+          : `تم نقل الملف إلى "${targetName}" بنجاح`
+      );
+
+      if (activeCategoryId !== null) {
         await fetchCategoryDocs(activeCategoryId);
+      } else {
+        setDocuments([]);
       }
       await fetchCategories();
     } catch {
-      // silently fail
+      alert(isEn ? "Connection error while moving the file" : "خطأ في الاتصال أثناء نقل الملف");
     }
   }
 

@@ -1,62 +1,81 @@
-import fs from "fs";
-import { execFile } from "child_process";
-import { promisify } from "util";
+import JSZip from "jszip";
+import path from "path";
+import { convertWithLibreOffice } from "@/lib/files/office-convert";
 
-const execFileAsync = promisify(execFile);
+/* =========================================================
+   استخراج نص PowerPoint
+   - .pptx → قراءة XML الشرائح مباشرة بـ JSZip (بدون عمليات فرعية)
+   - .ppt  → تحويل بـ LibreOffice إلى pptx ثم القراءة
+========================================================= */
 
-export async function extractPowerPointText(filePath: string) {
-  const extension = filePath.toLowerCase().endsWith(".pptx")
-    ? ".pptx"
-    : ".ppt";
+function xmlToText(xml: string): string {
+  return xml
+    .replace(/<a:br\s*\/?>/g, "\n")
+    .replace(/<\/a:p>/g, "\n")
+    .replace(/<a:t>/g, "")
+    .replace(/<\/a:t>/g, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/[ \t]+/g, " ")
+    .trim();
+}
 
-  if (extension === ".ppt") {
-    throw new Error("صيغة PPT القديمة تحتاج معالجة مختلفة");
+export async function extractPowerPointText(filePath: string): Promise<string> {
+  const ext = path.extname(filePath).toLowerCase();
+
+  let targetPath = filePath;
+
+  if (ext === ".ppt") {
+    console.log(`[PPT] تحويل ملف .ppt عبر LibreOffice: ${path.basename(filePath)}`);
+    targetPath = await convertWithLibreOffice(filePath, "pptx");
   }
 
-  const buffer = fs.readFileSync(filePath);
+  const { readFile } = await import("fs/promises");
+  const buffer = await readFile(targetPath);
 
   if (!buffer.length) {
     throw new Error("ملف PowerPoint فارغ");
   }
 
-  try {
-    const { stdout } = await execFileAsync(
-      "node",
-      [
-        "-e",
-        `
-        const fs = require("fs");
-        const JSZip = require("jszip");
+  const zip = await JSZip.loadAsync(buffer);
 
-        (async () => {
-          const data = fs.readFileSync(process.argv[1]);
-          const zip = await JSZip.loadAsync(data);
-          let text = "";
+  // ترتيب الشرائح رقميًا وليس أبجديًا (slide1, slide2, ... slide10)
+  const slideNames = Object.keys(zip.files)
+    .filter(
+      (name) =>
+        /^ppt\/slides\/slide\d+\.xml$/.test(name) ||
+        /^ppt\/slides\/slide\d+.*\.xml$/.test(name)
+    )
+    .sort((a, b) => {
+      const na = parseInt(a.match(/slide(\d+)/)?.[1] || "0", 10);
+      const nb = parseInt(b.match(/slide(\d+)/)?.[1] || "0", 10);
+      return na - nb;
+    });
 
-          for (const name of Object.keys(zip.files)) {
-            if (name.startsWith("ppt/slides/slide") && name.endsWith(".xml")) {
-              const xml = await zip.files[name].async("text");
-              text += xml
-                .replace(/<a:t>/g, "")
-                .replace(/<\\/a:t>/g, " ")
-                .replace(/<[^>]+>/g, " ")
-                .replace(/\\\\s+/g, " ")
-                .trim() + "\\n\\n";
-            }
-          }
-
-          process.stdout.write(text);
-        })();
-        `,
-        filePath,
-      ],
-      {
-        maxBuffer: 20 * 1024 * 1024,
-      },
-    );
-
-    return stdout;
-  } catch {
-    throw new Error("تعذر قراءة ملف PowerPoint");
+  if (slideNames.length === 0) {
+    throw new Error("ملف PowerPoint لا يحتوي على شرائح قابلة للقراءة");
   }
+
+  const parts: string[] = [];
+
+  for (let i = 0; i < slideNames.length; i++) {
+    const xml = await zip.files[slideNames[i]].async("text");
+    const text = xmlToText(xml);
+
+    if (text) {
+      parts.push(`--- الشريحة ${i + 1} ---\n${text}`);
+    }
+  }
+
+  const combined = parts.join("\n\n").trim();
+
+  if (!combined) {
+    throw new Error("لم يتم العثور على نص داخل شرائح PowerPoint");
+  }
+
+  return combined;
 }

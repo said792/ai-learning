@@ -2,6 +2,12 @@ import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { hashSessionToken } from "@/lib/auth";
+import {
+  activatePlanForUser,
+  activationMessage,
+  getEffectiveSubscription,
+  type PlanRecord,
+} from "@/lib/subscription";
 
 export const runtime = "nodejs";
 
@@ -46,31 +52,12 @@ export async function GET() {
       });
     }
 
-    const { data: sub } = await supabaseAdmin
-      .from("subscriptions")
-      .select(
-        `
-        id,
-        start_date,
-        end_date,
-        status,
-        plans (
-          id,
-          name,
-          monthly_limit,
-          daily_limit,
-          price,
-          duration_days,
-          features
-        )
-        `
-      )
-      .eq("user_id", userId)
-      .eq("status", "active")
-      .gte("end_date", new Date().toISOString())
-      .order("end_date", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+    /* الاشتراك الفعّال: الباقة المدفوعة السارية أولًا، وإلا الخطة المجانية */
+    const sub = await getEffectiveSubscription(
+      userId,
+      `id, start_date, end_date, status,
+       plans ( id, name, monthly_limit, daily_limit, price, duration_days, features )`
+    ).catch(() => null);
 
     if (!sub) {
       return NextResponse.json({
@@ -80,8 +67,23 @@ export async function GET() {
     }
 
     const plan = Array.isArray(sub.plans)
-      ? sub.plans[0]
-      : sub.plans;
+      ? (sub.plans as Array<Record<string, unknown>>)[0]
+      : (sub.plans as Record<string, unknown> | null);
+
+    if (!plan) {
+      return NextResponse.json({
+        subscription: null,
+        plan: null,
+      });
+    }
+
+    const daysRemaining = Math.max(
+      Math.ceil(
+        (new Date(sub.end_date as string).getTime() - Date.now()) /
+          (24 * 60 * 60 * 1000)
+      ),
+      0
+    );
 
     return NextResponse.json({
       subscription: {
@@ -89,6 +91,7 @@ export async function GET() {
         startDate: sub.start_date,
         endDate: sub.end_date,
         status: sub.status,
+        daysRemaining,
       },
       plan: plan || null,
     });
@@ -102,7 +105,13 @@ export async function GET() {
 }
 
 /* =========================================================
-   POST: تفعيل اشتراك بكود
+   POST: تفعيل / تجديد اشتراك بكود
+   - الكود هو مصدر الحقيقة للباقة (بنشتغل من الكود مباشرة)
+   - كود موافقة دفعة أول اشتراك بيبقى مربوط بمستخدم محدد —
+     مش بيشتغل مع أي حساب تاني
+   - لو الكود بيحمل يوم بداية (يوم الدفع) — المدة بتتحسب من يوم ما
+     المستخدم أكد الدفع مش من يوم إدخال الكود
+   - لو عنده اشتراك ساري: المدة بتتزاد على المتبقي (تجديد تراكمي)
 ========================================================= */
 
 export async function POST(req: Request) {
@@ -117,42 +126,21 @@ export async function POST(req: Request) {
     }
 
     const body = await req.json();
-    const planId = String(body.planId || "").trim();
     const code = String(body.code || "").trim().toUpperCase();
 
-    if (!planId || !code) {
+    if (!code) {
       return NextResponse.json(
-        { error: "بيانات غير مكتملة" },
+        { error: "أدخل كود التفعيل" },
         { status: 400 }
       );
     }
 
-    /* التأكد إن الباقة موجودة وفاعلة */
-    const { data: plan, error: planError } =
-      await supabaseAdmin
-        .from("plans")
-        .select("*")
-        .eq("id", planId)
-        .eq("is_active", true)
-        .maybeSingle();
-
-    if (planError || !plan) {
-      return NextResponse.json(
-        {
-          error:
-            "الباقة غير موجودة أو غير متاحة",
-        },
-        { status: 404 }
-      );
-    }
-
-    /* التحقق من كود التفعيل */
+    /* التحقق من كود التفعيل — من الكود نفسه بنعرف الباقة */
     const { data: codeRecord, error: codeError } =
       await supabaseAdmin
         .from("activation_codes")
         .select("*")
         .eq("code", code)
-        .eq("plan_id", planId)
         .eq("is_used", false)
         .maybeSingle();
 
@@ -166,40 +154,44 @@ export async function POST(req: Request) {
       );
     }
 
-    /* تعطيل الاشتراكات القديمة الفاعلة */
-    await supabaseAdmin
-      .from("subscriptions")
-      .update({ status: "expired" })
-      .eq("user_id", userId)
-      .eq("status", "active");
-
-    /* حساب تاريخ الانتهاء */
-    const endDate = new Date();
-    endDate.setDate(
-      endDate.getDate() + plan.duration_days
-    );
-
-    /* إنشاء الاشتراك الجديد */
-    const { error: subError } = await supabaseAdmin
-      .from("subscriptions")
-      .insert({
-        user_id: userId,
-        plan_id: planId,
-        start_date: new Date().toISOString(),
-        end_date: endDate.toISOString(),
-        status: "active",
-      });
-
-    if (subError) {
-      console.error(
-        "[Subscription] Create error:",
-        subError
-      );
+    /* الكود المولد بعد موافقة دفعة بيبقى مربوط بمستخدم محدد */
+    if (
+      codeRecord.bound_user_id &&
+      codeRecord.bound_user_id !== userId
+    ) {
       return NextResponse.json(
-        { error: "فشل إنشاء الاشتراك" },
-        { status: 500 }
+        {
+          error:
+            "الكود ده مخصص لمستخدم آخر — اتأكد إنك داخل بحسابك الصحيح، أو كلّم الإدارة",
+        },
+        { status: 403 }
       );
     }
+
+    /* الباقة اللي تابعة لها الكود */
+    const { data: plan, error: planError } =
+      await supabaseAdmin
+        .from("plans")
+        .select("id, name, price, duration_days")
+        .eq("id", codeRecord.plan_id)
+        .eq("is_active", true)
+        .maybeSingle();
+
+    if (planError || !plan) {
+      return NextResponse.json(
+        {
+          error:
+            "الباقة المرتبطة بالكود غير موجودة أو غير متاحة",
+        },
+        { status: 404 }
+      );
+    }
+
+    /* التفعيل/التجديد — المنطق الموحد (تراكمي فوق المتبقي)،
+       والبداية من يوم الدفع لو الكود بيحمل يوم بداية */
+    const result = await activatePlanForUser(userId, plan as PlanRecord, {
+      anchorDate: codeRecord.anchor_date ?? null,
+    });
 
     /* تحديد الكود كمستخدم */
     await supabaseAdmin
@@ -213,7 +205,12 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       success: true,
-      message: "تم تفعيل الاشتراك بنجاح",
+      renewed: result.renewed,
+      planName: plan.name,
+      endDate: result.endDate,
+      daysAdded: result.daysAdded,
+      daysRemaining: result.daysRemaining,
+      message: activationMessage(plan.name, result),
     });
   } catch (error) {
     console.error("[Subscription] POST error:", error);

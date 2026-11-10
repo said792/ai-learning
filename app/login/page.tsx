@@ -94,6 +94,14 @@ export default function LoginPage() {
         );
       }
 
+      if (data.autoLoggedIn) {
+        /* الدخول تم تلقائيًا — ندخل التطبيق مباشرة بحسابك الجديد */
+        await refreshUser();
+        router.push("/");
+        router.refresh();
+        return;
+      }
+
       setSuccess(
         isEn
           ? "Account created with a free plan! You can now login."

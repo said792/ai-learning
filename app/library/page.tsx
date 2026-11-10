@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useAuth } from "../context/AuthContext";
 import { useLanguage } from "../context/LanguageContext";
+import DocumentViewer from "../components/DocumentViewer";
 
 interface Category {
   id: string;
@@ -19,6 +20,18 @@ interface Doc {
   status: string;
   created_at: string;
   category_id: string | null;
+}
+
+interface FolderLesson {
+  id: string;
+  kind: string;
+  mode: string;
+  title: string;
+  mimeType: string | null;
+  durationSec: number | null;
+  status: string;
+  url: string | null;
+  documentTitle: string | null;
 }
 
 const PRESET_COLORS = [
@@ -46,6 +59,63 @@ export default function LibraryPage() {
   const [newColor, setNewColor] = useState("#3B82F6");
   const [creating, setCreating] = useState(false);
 
+  const [viewingDoc, setViewingDoc] = useState<{ id: string; fileName: string } | null>(null);
+
+  /* رسالة نجاح/خطأ مؤقتة (إشعار صغير أسفل الشاشة) */
+  const [notice, setNotice] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
+  useEffect(function () {
+    if (!notice) return;
+    const timer = setTimeout(function () { setNotice(null); }, 3500);
+    return function () { clearTimeout(timer); };
+  }, [notice]);
+
+  function showNotice(type: "success" | "error", text: string) {
+    setNotice({ type: type, text: text });
+  }
+
+  /* دروس الفولدر الحالي — بتظهر جوه الفولدر */
+  const [folderLessons, setFolderLessons] = useState<FolderLesson[]>([]);
+  const [lessonsLoading, setLessonsLoading] = useState(false);
+
+  /* جلب قائمة المستندات — بترجّع البيانات الجديدة عشان
+     نتفادى مشكلة الـ stale closure اللي كانت بتخلي نقل الملف
+     بين الفولدرات يظهر كأنه مش بينفذ */
+  async function fetchDocumentsList(): Promise<Doc[]> {
+    try {
+      const docRes = await fetch("/api/documents");
+      if (!docRes.ok) return [];
+      const docData = await docRes.json();
+      const docs: Doc[] = (docData.documents || []).map(function (d: any) {
+        return {
+          id: d.id,
+          file_name: d.file_name,
+          media_type: d.media_type,
+          status: d.status,
+          created_at: d.created_at,
+          category_id: d.category_id || null,
+        };
+      });
+      setAllDocs(docs);
+      return docs;
+    } catch {
+      return [];
+    }
+  }
+
+  /* تصفية من مصفوفة محددة (مش من الحالة القديمة) */
+  function applyFilter(docs: Doc[], categoryId: string | null) {
+    setDocLoading(true);
+    setTimeout(function () {
+      if (categoryId) {
+        setDocuments(docs.filter(function (d) { return d.category_id === categoryId; }));
+      } else {
+        setDocuments(docs.filter(function (d) { return !d.category_id; }));
+      }
+      setDocLoading(false);
+    }, 100);
+  }
+
   async function fetchCategories() {
     try {
       const res = await fetch("/api/categories");
@@ -56,38 +126,12 @@ export default function LibraryPage() {
         setUncatCount(data.uncategorizedCount || 0);
       }
 
-      const docRes = await fetch("/api/documents");
-      if (docRes.ok) {
-        const docData = await docRes.json();
-        const docs = (docData.documents || []).map(function (d: any) {
-          return {
-            id: d.id,
-            file_name: d.file_name,
-            media_type: d.media_type,
-            status: d.status,
-            created_at: d.created_at,
-            category_id: d.category_id || null,
-          };
-        });
-        setAllDocs(docs);
-      }
+      await fetchDocumentsList();
     } catch {
       // silent
     } finally {
       setLoading(false);
     }
-  }
-
-  function filterDocuments(categoryId: string | null) {
-    setDocLoading(true);
-    setTimeout(function () {
-      if (categoryId) {
-        setDocuments(allDocs.filter(function (d) { return d.category_id === categoryId; }));
-      } else {
-        setDocuments(allDocs.filter(function (d) { return !d.category_id; }));
-      }
-      setDocLoading(false);
-    }, 100);
   }
 
   async function createCategory() {
@@ -132,18 +176,38 @@ export default function LibraryPage() {
     }
   }
 
+  /* نقل ملف لفولدر آخر — بنجيب البيانات الجديدة بعد النقل مباشرة
+     (النسخة القديمة كانت بتعرض القديمة فبيبان كأن النقل مش بينفذ) */
   async function moveDocument(docId: string, categoryId: string | null) {
+    const targetName = categoryId
+      ? (categories.find(function (c) { return c.id === categoryId; })?.name || "")
+      : (isEn ? "Uncategorized" : "بدون تصنيف");
+
     try {
-      await fetch("/api/documents/" + docId, {
+      const res = await fetch("/api/documents/" + docId, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ categoryId: categoryId }),
+        body: JSON.stringify({ category_id: categoryId }),
       });
-      await fetchCategories();
-      if (activeCat) filterDocuments(activeCat.id);
-      else if (showUncat) filterDocuments(null);
+
+      const data = await res.json().catch(function () { return null; });
+
+      if (!res.ok || !data || data.success === false) {
+        showNotice("error", data?.error || (isEn ? "Failed to move the file" : "فشل نقل الملف"));
+        return;
+      }
+
+      showNotice("success",
+        isEn
+          ? "Moved to \"" + targetName + "\" successfully"
+          : "تم نقل الملف إلى \"" + targetName + "\" بنجاح"
+      );
+
+      const fresh = await fetchDocumentsList();
+      if (activeCat) applyFilter(fresh, activeCat.id);
+      else if (showUncat) applyFilter(fresh, null);
     } catch {
-      // silent
+      showNotice("error", isEn ? "Connection error while moving the file" : "خطأ في الاتصال أثناء نقل الملف");
     }
   }
 
@@ -152,17 +216,55 @@ export default function LibraryPage() {
     if (!confirm(msg)) return;
     try {
       const res = await fetch("/api/documents/" + docId, { method: "DELETE" });
-      if (res.ok) {
+      const data = await res.json().catch(function () { return null; });
+      if (res.ok && data && data.success !== false) {
+        showNotice("success", isEn ? "File deleted" : "تم حذف الملف بنجاح");
         await fetchCategories();
-        if (activeCat) filterDocuments(activeCat.id);
-        else if (showUncat) filterDocuments(null);
+        if (activeCat) applyFilter(allDocs, activeCat.id);
+        else if (showUncat) applyFilter(allDocs, null);
+      } else {
+        showNotice("error", data?.error || (isEn ? "Failed to delete the file" : "فشل حذف الملف"));
       }
     } catch {
-      // silent
+      showNotice("error", isEn ? "Connection error" : "خطأ في الاتصال");
     }
   }
 
+  /* فتح مستند موجود في الصفحة الرئيسية بدون رفعه تاني —
+     عشان تولّد له درس صوتي/فيديو أو تعمل اختبار أو تشات من غير ما تدور على الملف الأصلي */
+  function openInHome(docId: string) {
+    try {
+      sessionStorage.setItem("ai_open_document", JSON.stringify({ id: docId }));
+    } catch {
+      /* تجاهل */
+    }
+    window.location.href = "/";
+  }
+
   useEffect(function () { fetchCategories(); }, []);
+
+  /* تحميل دروس الفولدر عند دخوله */
+  useEffect(function () {
+    if (!activeCat) {
+      setFolderLessons([]);
+      return;
+    }
+    let cancelled = false;
+    (async function () {
+      setLessonsLoading(true);
+      try {
+        const res = await fetch("/api/lessons?categoryId=" + activeCat.id, { credentials: "include" });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled) setFolderLessons(data.lessons || []);
+      } catch {
+        // silent
+      } finally {
+        if (!cancelled) setLessonsLoading(false);
+      }
+    })();
+    return function () { cancelled = true; };
+  }, [activeCat]);
 
   /* === Loading === */
   if (authLoading || loading) {
@@ -364,6 +466,20 @@ export default function LibraryPage() {
                         </div>
                       </div>
                       <div className="flex items-center gap-2 pl-12 sm:pl-0">
+                        <button
+                          onClick={function () { openInHome(doc.id); }}
+                          title={isEn ? "Open in home page — create audio/video lessons, quiz, chat" : "افتح في الصفحة الرئيسية — ولّد دروس صوت/فيديو واختبارات وشات"}
+                          className="shrink-0 rounded-lg px-2 py-1.5 text-[10px] text-slate-400 hover:bg-emerald-50 hover:text-emerald-600 transition"
+                        >
+                          🚀
+                        </button>
+                        <button
+                          onClick={function () { setViewingDoc({ id: doc.id, fileName: doc.file_name }); }}
+                          title={isEn ? "View analysis" : "عرض التحليل"}
+                          className="shrink-0 rounded-lg px-2 py-1.5 text-[10px] text-slate-400 hover:bg-blue-50 hover:text-blue-500 transition"
+                        >
+                          👁️
+                        </button>
                         <select
                           value={doc.category_id || ""}
                           onChange={function (e) { moveDocument(doc.id, e.target.value || null); }}
@@ -386,6 +502,84 @@ export default function LibraryPage() {
                 })
               )}
             </div>
+            {/* دروس هذا الفولدر */}
+            {activeCat && (
+              <div className="border-t border-slate-100 bg-slate-50/60 px-4 py-4 sm:px-6">
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <h4 className="flex items-center gap-1.5 text-sm font-bold text-slate-800">
+                    🎧 {isEn ? "Lessons in this folder" : "دروس هذا الفولدر"}
+                    {folderLessons.length > 0 && (
+                      <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] text-slate-600">
+                        {folderLessons.length}
+                      </span>
+                    )}
+                  </h4>
+                  <Link
+                    href="/lessons"
+                    className="shrink-0 text-[11px] font-medium text-blue-600 transition hover:text-blue-700"
+                  >
+                    {isEn ? "All my lessons →" : "كل دروسي ←"}
+                  </Link>
+                </div>
+
+                {lessonsLoading ? (
+                  <div className="py-4 text-center">
+                    <span className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-slate-200 border-t-slate-600" />
+                  </div>
+                ) : folderLessons.length === 0 ? (
+                  <p className="rounded-lg bg-white px-3 py-2.5 text-[11px] text-slate-400 ring-1 ring-slate-100">
+                    {isEn
+                      ? "No lessons generated from this folder's files yet — open a file and convert it"
+                      : "لا توجد دروس مولدة من ملفات هذا الفولدر بعد — افتح أي ملف وحوّله لدرس"}
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {folderLessons.map(function (l) {
+                      const dur = l.durationSec
+                        ? Math.floor(l.durationSec / 60) + ":" + String(Math.round(l.durationSec % 60)).padStart(2, "0")
+                        : null;
+                      return (
+                        <div key={l.id} className="rounded-lg bg-white p-3 ring-1 ring-slate-100">
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="truncate text-xs font-semibold text-slate-700">
+                              {l.kind === "audio" ? "🎧" : "🎬"} {l.title}
+                            </p>
+                            <div className="flex shrink-0 items-center gap-1.5">
+                              {l.documentTitle && (
+                                <span className="max-w-[140px] truncate rounded-full bg-slate-100 px-2 py-0.5 text-[9px] text-slate-500">
+                                  📄 {l.documentTitle}
+                                </span>
+                              )}
+                              {dur && (
+                                <span className="text-[10px] text-slate-400" dir="ltr">
+                                  {dur}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          {l.status === "completed" && l.url && (
+                            <div className="mt-2">
+                              {l.mimeType && l.mimeType.includes("audio") ? (
+                                <audio controls src={l.url} className="w-full" />
+                              ) : (
+                                <video controls src={l.url} className="max-h-44 w-full rounded-lg bg-black" />
+                              )}
+                            </div>
+                          )}
+
+                          {l.status === "failed" && (
+                            <p className="mt-1 text-[10px] text-red-500">
+                              ⚠️ {isEn ? "Generation failed" : "فشل إنشاء الدرس"}
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -421,7 +615,7 @@ export default function LibraryPage() {
                 return (
                   <button
                     key={cat.id}
-                    onClick={function () { setActiveCat(cat); setShowUncat(false); filterDocuments(cat.id); }}
+                    onClick={function () { setActiveCat(cat); setShowUncat(false); applyFilter(allDocs, cat.id); }}
                     className="group flex flex-col items-center gap-2 rounded-xl border-2 border-slate-200 bg-white p-4 text-center transition-all hover:border-slate-300 hover:shadow-md sm:gap-3 sm:p-6"
                   >
                     <div
@@ -440,7 +634,7 @@ export default function LibraryPage() {
 
               {uncatCount > 0 && (
                 <button
-                  onClick={function () { setActiveCat(null); setShowUncat(true); filterDocuments(null); }}
+                  onClick={function () { setActiveCat(null); setShowUncat(true); applyFilter(allDocs, null); }}
                   className="group flex flex-col items-center gap-2 rounded-xl border-2 border-dashed border-slate-200 bg-slate-50/50 p-4 text-center transition-all hover:border-slate-300 hover:bg-slate-50 sm:gap-3 sm:p-6"
                 >
                   <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-200 text-xl sm:h-14 sm:w-14 sm:rounded-2xl sm:text-2xl">📂</div>
@@ -466,6 +660,32 @@ export default function LibraryPage() {
           )
         )}
       </div>
+
+      {/* ====== رسالة النجاح/الخطأ ====== */}
+      {notice && (
+        <div
+          className={
+            "fixed bottom-5 left-1/2 z-50 -translate-x-1/2 rounded-xl px-4 py-2.5 text-xs font-semibold shadow-lg transition " +
+            (notice.type === "success"
+              ? "bg-emerald-600 text-white"
+              : "bg-red-600 text-white")
+          }
+          role="status"
+        >
+          {notice.type === "success" ? "✅ " : "⚠️ "}
+          {notice.text}
+        </div>
+      )}
+
+      {/* ====== عارض المستند ====== */}
+      {viewingDoc && (
+        <DocumentViewer
+          documentId={viewingDoc.id}
+          fileName={viewingDoc.fileName}
+          isEn={isEn}
+          onClose={function () { setViewingDoc(null); }}
+        />
+      )}
     </div>
   );
 }

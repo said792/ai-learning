@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import {
   createSessionToken,
@@ -9,11 +8,27 @@ import {
 
 export const runtime = "nodejs";
 
+/* =========================================================
+   تعقيم مدخل تسجيل الدخول
+   (كان يُدمج مباشرة في فلتر PostgREST — قابل لكسر/حقن الاستعلام)
+========================================================= */
+
+function sanitizeLogin(raw: string): string {
+  return raw
+    .trim()
+    // إزالة الرموز التي تكسر صيغة فلتر PostgREST
+    .replace(/[,()":*.\s]/g, "")
+    .slice(0, 120);
+}
+
+/* عزل البيانات: لا نقل لملفات الزائر إلى الحساب عند الدخول —
+   كل حساب يرى ملفاته فقط، وكوكي الزائر يتمسح بعد الدخول */
+
 export async function POST(req: Request) {
   try {
     const body = await req.json();
 
-    const login = String(body.login || "").trim();
+    const login = sanitizeLogin(String(body.login || ""));
     const password = String(body.password || "");
 
     if (!login || !password) {
@@ -23,10 +38,8 @@ export async function POST(req: Request) {
       );
     }
 
-    const { data: users, error } = await supabaseAdmin
-      .from("users")
-      .select(
-        `
+    /* استعلامات منفصلة آمنة بدل دمج الإدخال في فلتر .or() */
+    const columns = `
         id,
         full_name,
         username,
@@ -50,23 +63,38 @@ export async function POST(req: Request) {
             duration_days
           )
         )
-        `
-      )
-      .or(
-        `username.eq.${login},phone.eq.${login},national_id.eq.${login},email.eq.${login.toLowerCase()}`
-      )
-      .limit(1);
+        `;
 
-    if (error) {
-      console.error("Login query error:", error);
+    const [byUsername, byPhone, byNationalId, byEmail] = await Promise.all([
+      supabaseAdmin.from("users").select(columns).eq("username", login).limit(1),
+      supabaseAdmin.from("users").select(columns).eq("phone", login).limit(1),
+      supabaseAdmin.from("users").select(columns).eq("national_id", login).limit(1),
+      supabaseAdmin
+        .from("users")
+        .select(columns)
+        .eq("email", login.toLowerCase())
+        .limit(1),
+    ]);
+
+    const foundRows = [
+      byUsername.data,
+      byPhone.data,
+      byNationalId.data,
+      byEmail.data,
+    ].find((rows) => rows && rows.length > 0);
+
+    const queryError = byUsername.error; // للتوافق مع معالجة الخطأ أدناه
+
+    const user = foundRows?.[0];
+
+    if (queryError) {
+      console.error("Login query error:", queryError);
 
       return NextResponse.json(
         { error: "حدث خطأ أثناء تسجيل الدخول" },
         { status: 500 }
       );
     }
-
-    const user = users?.[0];
 
     if (!user) {
       return NextResponse.json(
@@ -126,33 +154,8 @@ export async function POST(req: Request) {
       .eq("id", user.id);
 
     /* =========================================================
-       ربط مستندات الزائر بالحساب
+       (تم إلغاء ربط مستندات الزائر بالحساب — عزل كامل للبيانات)
     ========================================================= */
-
-    try {
-      const cookieStore = await cookies();
-      const guestId = cookieStore.get("guest_id")?.value;
-
-      if (guestId) {
-        const { error: linkError } = await supabaseAdmin
-          .from("documents")
-          .update({ user_id: user.id })
-          .eq("guest_id", guestId)
-          .is("user_id", null);
-
-        if (linkError) {
-          console.error(
-            "[Login] Failed to link guest documents:",
-            linkError
-          );
-        }
-      }
-    } catch (linkError) {
-      console.error(
-        "[Login] Guest link error:",
-        linkError
-      );
-    }
 
     // ============================================
     // استخراج الاشتراك والخطة الفعالة
@@ -219,7 +222,17 @@ export async function POST(req: Request) {
       maxAge: 7 * 24 * 60 * 60,
     });
 
-    /* امسح كوكيز guest_id بعد الربط */
+    /* امسح كوكي الزائر بعد الربط (كلا الاسمين للتوافق مع المتصفحات القديمة) */
+    response.cookies.set({
+      name: "ai_guest_id",
+      value: "",
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      path: "/",
+      maxAge: 0,
+    });
+
     response.cookies.set({
       name: "guest_id",
       value: "",

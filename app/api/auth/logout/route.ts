@@ -36,6 +36,28 @@ export async function POST() {
       maxAge: 0,
     });
 
+    /* مسح كوكي الزائر عند الخروج أيضًا — عشان المستخدم اللي بعدك
+       على نفس المتصفح ميشوفش بقايا ملفات جلسة الزائر القديمة */
+    response.cookies.set({
+      name: "ai_guest_id",
+      value: "",
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      path: "/",
+      maxAge: 0,
+    });
+
+    response.cookies.set({
+      name: "guest_id",
+      value: "",
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      path: "/",
+      maxAge: 0,
+    });
+
     return response;
   } catch (error) {
     console.error("Logout error:", error);

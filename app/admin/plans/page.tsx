@@ -16,6 +16,8 @@ interface Plan {
   description: string | null;
   monthly_limit: number | null;
   daily_limit: number | null;
+  tts_daily_limit?: number | null;
+  video_daily_limit?: number | null;
   price: number;
   duration_days: number;
   features: string[] | Record<string, unknown> | null;
@@ -45,6 +47,8 @@ export default function AdminPlansPage() {
   const [description, setDescription] = useState("");
   const [monthlyLimit, setMonthlyLimit] = useState("");
   const [dailyLimit, setDailyLimit] = useState("");
+  const [ttsLimit, setTtsLimit] = useState("");
+  const [videoLimit, setVideoLimit] = useState("");
   const [price, setPrice] = useState("");
   const [durationDays, setDurationDays] = useState("");
   const [features, setFeatures] = useState("");
@@ -106,6 +110,8 @@ export default function AdminPlansPage() {
     setDescription("");
     setMonthlyLimit("");
     setDailyLimit("");
+    setTtsLimit("");
+    setVideoLimit("");
     setPrice("");
     setDurationDays("");
     setFeatures("");
@@ -119,6 +125,8 @@ export default function AdminPlansPage() {
     setDescription(plan.description || "");
     setMonthlyLimit(plan.monthly_limit == null ? "" : String(plan.monthly_limit));
     setDailyLimit(plan.daily_limit == null ? "" : String(plan.daily_limit));
+    setTtsLimit(plan.tts_daily_limit == null ? "" : String(plan.tts_daily_limit));
+    setVideoLimit(plan.video_daily_limit == null ? "" : String(plan.video_daily_limit));
     setPrice(String(plan.price));
     setDurationDays(String(plan.duration_days));
     setFeatures(featuresToString(plan.features));
@@ -155,6 +163,8 @@ export default function AdminPlansPage() {
         description: description.trim() || null,
         monthly_limit: monthlyLimit === "" ? null : Number(monthlyLimit) === -1 ? -1 : Number(monthlyLimit),
         daily_limit: dailyLimit === "" ? null : Number(dailyLimit) === -1 ? -1 : Number(dailyLimit),
+        tts_daily_limit: ttsLimit === "" ? null : Number(ttsLimit),
+        video_daily_limit: videoLimit === "" ? null : Number(videoLimit),
         price: Number(price),
         duration_days: Number(durationDays),
         features: features.trim() ? stringToFeatures(features) : null,
@@ -450,6 +460,34 @@ export default function AdminPlansPage() {
                       value={dailyLimit}
                       onChange={(e) => setDailyLimit(e.target.value)}
                       placeholder={isEn ? "-1 for unlimited" : "-1 لغير محدود"}
+                      className="w-full rounded-lg border border-border bg-background px-4 py-2.5 text-sm outline-none focus:border-primary"
+                      dir="ltr"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-1.5 block text-xs font-semibold text-text-soft">
+                      {isEn ? "Audio Lessons / day" : "الدروس الصوتية / يوم"}
+                    </label>
+                    <input
+                      type="number"
+                      value={ttsLimit}
+                      onChange={(e) => setTtsLimit(e.target.value)}
+                      placeholder={isEn ? "empty = unlimited, 0 = blocked" : "فارغ = غير محدود، 0 = ممنوع"}
+                      className="w-full rounded-lg border border-border bg-background px-4 py-2.5 text-sm outline-none focus:border-primary"
+                      dir="ltr"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-1.5 block text-xs font-semibold text-text-soft">
+                      {isEn ? "Video Lessons / day" : "الدروس المرئية / يوم"}
+                    </label>
+                    <input
+                      type="number"
+                      value={videoLimit}
+                      onChange={(e) => setVideoLimit(e.target.value)}
+                      placeholder={isEn ? "empty = unlimited, 0 = blocked" : "فارغ = غير محدود، 0 = ممنوع"}
                       className="w-full rounded-lg border border-border bg-background px-4 py-2.5 text-sm outline-none focus:border-primary"
                       dir="ltr"
                     />

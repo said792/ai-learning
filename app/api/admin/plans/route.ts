@@ -69,7 +69,7 @@ export async function POST(req: Request) {
   try {
     const body = await req.json();
 
-    const { name, description, monthly_limit, daily_limit, price, duration_days, features } = body;
+    const { name, description, monthly_limit, daily_limit, tts_daily_limit, video_daily_limit, price, duration_days, features } = body;
 
     if (!name) {
       return NextResponse.json({ error: "اسم الخطة مطلوب" }, { status: 400 });
@@ -86,6 +86,8 @@ export async function POST(req: Request) {
         description: description || null,
         monthly_limit: monthly_limit ?? null,
         daily_limit: daily_limit ?? null,
+        tts_daily_limit: tts_daily_limit ?? null,
+        video_daily_limit: video_daily_limit ?? null,
         price: Number(price),
         duration_days: Number(duration_days),
         features: features || null,
@@ -112,7 +114,7 @@ export async function PUT(req: Request) {
 
   try {
     const body = await req.json();
-    const { id, name, description, monthly_limit, daily_limit, price, duration_days, features } = body;
+    const { id, name, description, monthly_limit, daily_limit, tts_daily_limit, video_daily_limit, price, duration_days, features } = body;
 
     if (!id) {
       return NextResponse.json({ error: "معرف الخطة مطلوب" }, { status: 400 });
@@ -124,6 +126,8 @@ export async function PUT(req: Request) {
     if (description !== undefined) updateData.description = description;
     if (monthly_limit !== undefined) updateData.monthly_limit = monthly_limit;
     if (daily_limit !== undefined) updateData.daily_limit = daily_limit;
+    if (tts_daily_limit !== undefined) updateData.tts_daily_limit = tts_daily_limit;
+    if (video_daily_limit !== undefined) updateData.video_daily_limit = video_daily_limit;
     if (price !== undefined) updateData.price = Number(price);
     if (duration_days !== undefined) updateData.duration_days = Number(duration_days);
     if (features !== undefined) updateData.features = features;
