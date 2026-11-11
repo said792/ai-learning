@@ -2,7 +2,7 @@
 
 
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 
 import type { Dispatch, SetStateAction } from "react";
 
@@ -15,6 +15,12 @@ import CategoryManager from "./components/CategoryManager";
 import CategorySelector from "./components/CategorySelector";
 
 import LessonModal from "./components/LessonModal";
+
+import {
+  uploadFileDirect,
+  UploadClientError,
+  DEFAULT_TUS_CHUNK_SIZE,
+} from "@/lib/upload/browser-upload";
 
 
 
@@ -175,6 +181,16 @@ export default function Home() {
   const [messageType, setMessageType] = useState<"success" | "error" | "info">("success");
 
   const [loading, setLoading] = useState(false);
+
+  const [uploadProgress, setUploadProgress] = useState<{
+
+    phase: "init" | "upload" | "finalize";
+
+    percent: number;
+
+  } | null>(null);
+
+  const uploadAbortRef = useRef<AbortController | null>(null);
 
   const [result, setResult] = useState<UploadResult | null>(null);
 
@@ -418,6 +434,8 @@ export default function Home() {
 
     setLessonModalOpen(false);
 
+    setUploadProgress(null);
+
 
 
     try {
@@ -474,49 +492,127 @@ export default function Home() {
 
       }
 
-      const fd = new FormData();
+      /* =====================================================
+         الرفع المباشر: init → رفع من المتصفح إلى Supabase → complete
+         الملف لا يمر عبر Vercel أثناء الرفع — يتجاوز حد 4.5MB (413)
+      ===================================================== */
+      const controller = new AbortController();
 
-      fd.append("file", file);
+      uploadAbortRef.current = controller;
 
-      fd.append("lang", lang);
+      let completed: { status: number; data: Record<string, unknown> } | null = null;
 
-      if (selectedCategoryId) fd.append("categoryId", selectedCategoryId);
+      try {
 
-      const response = await fetch("/api/documents/upload", { method: "POST", body: fd });
+        completed = await uploadFileDirect({
+          file,
+          lang,
+          categoryId: selectedCategoryId,
+          chunkSize: DEFAULT_TUS_CHUNK_SIZE,
+          onPhase: (phase) => setUploadProgress((prev) => ({ phase, percent: prev?.percent ?? 0 })),
+          onProgress: (percent) => setUploadProgress((prev) => ({ phase: prev?.phase ?? "upload", percent })),
+          signal: controller.signal,
+        });
 
-      const data = await response.json();
+      } catch (uploadError) {
 
-      if (!response.ok) {
+        /* خطة بديلة: المسار القديم عبر Vercel لو مسارات الرفع المباشر
+           غير منشورة بعد (404/405) أو حدث عطل سيرفر لملف صغير يمر عبره */
+        const status = uploadError instanceof UploadClientError ? uploadError.status : undefined;
 
-        setMessage(data.error || (isEn ? "An error occurred" : "حدث خطأ"));
+        const routesMissing = status === 404 || status === 405;
 
-        setMessageType("error");
+        const smallEnoughForLegacy = file.size <= 4.5 * 1024 * 1024;
+
+        const canLegacy = routesMissing || (status !== undefined && status >= 500 && smallEnoughForLegacy);
+
+        if (!canLegacy) throw uploadError;
+
+        const fd = new FormData();
+
+        fd.append("file", file);
+
+        fd.append("lang", lang);
+
+        if (selectedCategoryId) fd.append("categoryId", selectedCategoryId);
+
+        const response = await fetch("/api/documents/upload", { method: "POST", body: fd });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+
+          setMessage(data.error || (isEn ? "An error occurred" : "حدث خطأ"));
+
+          setMessageType("error");
+
+          return;
+
+        }
+
+        setResult(data);
+
+        setUploadedAssets(data.assets || []);
+
+        if (data.categorySuggestion) setCategorySuggestion(data.categorySuggestion);
+
+        setMessage(isEn ? "Processed successfully" : "تمت المعالجة بنجاح");
+
+        setMessageType("success");
 
         return;
 
       }
 
-      setResult(data);
+      if (completed) {
 
-      setUploadedAssets(data.assets || []);
+        const data = completed.data as unknown as UploadResult & { assets?: DocumentAsset[]; categorySuggestion?: { suggestedName: string | null; confidence: string } };
 
-      if (data.categorySuggestion) setCategorySuggestion(data.categorySuggestion);
+        setResult(data);
 
-      setMessage(isEn ? "Processed successfully" : "تمت المعالجة بنجاح");
+        setUploadedAssets(data.assets || []);
 
-      setMessageType("success");
+        if (data.categorySuggestion) setCategorySuggestion(data.categorySuggestion);
 
-    } catch {
+        setMessage(isEn ? "Processed successfully" : "تمت المعالجة بنجاح");
 
-      setMessage(isEn ? "Connection error" : "خطأ في الاتصال");
+        setMessageType("success");
 
-      setMessageType("error");
+      }
+
+    } catch (error) {
+
+      const aborted = uploadAbortRef.current?.signal.aborted || (error instanceof UploadClientError && error.status === 499);
+
+      if (aborted) {
+
+        setMessage(isEn ? "Upload cancelled" : "تم إلغاء الرفع — اضغط رفع وتحليل مرة أخرى للاستكمال من حيث توقف");
+
+        setMessageType("info");
+
+      } else {
+
+        setMessage(error instanceof UploadClientError ? error.message : (isEn ? "Connection error" : "خطأ في الاتصال"));
+
+        setMessageType("error");
+
+      }
 
     } finally {
 
       setLoading(false);
 
+      setUploadProgress(null);
+
+      uploadAbortRef.current = null;
+
     }
+
+  }
+
+  function cancelUpload() {
+
+    uploadAbortRef.current?.abort();
 
   }
 
@@ -1000,6 +1096,43 @@ export default function Home() {
           </div>
 
           {message && <p className={`mt-3 text-xs font-medium ${messageType === "success" ? "text-emerald-600" : messageType === "info" ? "text-blue-600" : "text-red-500"}`}>{messageType === "info" && "ℹ️ "}{message}</p>}
+
+          {uploadProgress && (
+            <div className="mt-3">
+
+              <div className="flex items-center justify-between text-[11px] font-medium text-slate-500">
+
+                <span>
+
+                  {uploadProgress.phase === "init"
+                    ? (isEn ? "Preparing direct upload..." : "جاري التحضير للرفع المباشر...")
+                    : uploadProgress.phase === "upload"
+                    ? (isEn ? `Uploading directly... ${uploadProgress.percent}%` : `جاري رفع الملف مباشرة... ${uploadProgress.percent}%`)
+                    : (isEn ? "Analyzing content..." : "جاري تحليل المحتوى...")}
+
+                </span>
+
+                {uploadProgress.phase === "upload" && (
+                  <button onClick={cancelUpload} className="rounded-md border border-slate-200 px-2 py-0.5 text-[11px] text-slate-500 transition hover:bg-slate-50">{isEn ? "Cancel" : "إلغاء"}</button>
+                )}
+
+              </div>
+
+              <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+
+                <div
+                  className="h-full rounded-full bg-slate-800 transition-all duration-300"
+                  style={{ width: `${uploadProgress.phase === "init" ? 4 : uploadProgress.phase === "finalize" ? 100 : uploadProgress.percent}%` }}
+                />
+
+              </div>
+
+              {uploadProgress.phase === "upload" && (
+                <p className="mt-1 text-[10px] text-slate-400">{isEn ? "Large files are uploaded in resumable chunks — safe on unstable connections" : "الملفات الكبيرة بتترفع مقاطع قابلة للاستكمال — آمنة حتى مع انقطاع الإنترنت"}</p>
+              )}
+
+            </div>
+          )}
 
         </div>
 
