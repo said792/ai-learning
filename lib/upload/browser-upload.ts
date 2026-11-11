@@ -297,7 +297,12 @@ async function createTusSession(params: {
   contentType: string | null;
   signatureToken: string;
 }): Promise<string> {
-  const endpoint = `${resolveStorageBaseUrl(params.supabaseUrl)}/storage/v1/upload/resumable`;
+  /* مهم جدًا: نقطة TUS الموقّعة "/sign" هي الوحيدة التي تقبل
+     توكين createSignedUploadUrl في هيدر x-signature بدون JWT.
+     المسار العادي "/upload/resumable" يرفض الطلب دائمًا بخطأ
+     "headers must have required property 'authorization'"
+     لأنه محمي بمخطط JWT إلزامي في Supabase Storage. */
+  const endpoint = `${resolveStorageBaseUrl(params.supabaseUrl)}/storage/v1/upload/resumable/sign`;
 
   const response = await fetch(endpoint, {
     method: "POST",
