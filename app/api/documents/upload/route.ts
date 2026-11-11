@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { mkdir, writeFile } from "fs/promises";
 import path from "path";
+import os from "os";
 import crypto from "crypto";
 
 import { suggestCategory } from "@/lib/ai/category-suggest";
@@ -724,10 +725,11 @@ export async function POST(request: Request) {
     /* =====================================================
        Local Upload Directory
     ===================================================== */
-    const uploadDir = path.join(process.cwd(), "uploads");
+    // Vercel: استخدم مجلد /tmp القابل للكتابة بدل مجلد المشروع
+    const uploadDir = path.join(os.tmpdir(), "ai-learning-uploads");
     await mkdir(uploadDir, { recursive: true });
 
-    const localFileName = `${fileHash}-${safeFileName}`;
+    const localFileName = `${crypto.randomUUID()}-${safeFileName}`;
     const filePath = path.join(uploadDir, localFileName);
 
     await writeFile(filePath, buffer);
